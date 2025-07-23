@@ -1,9 +1,9 @@
 ---
-title: "An Example Workshop"
-author: Sean Davis^[seandavi@gmail.com]
+title: "EuroBioC2025 OSTA Workshop"
+author: Estella Yixing Dong^[estelladong729@gmail.com]
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{An Example Workshop}
+  %\VignetteIndexEntry{EuroBioC2025 OSTA Workshop}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
