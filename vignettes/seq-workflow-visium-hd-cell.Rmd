@@ -114,6 +114,8 @@ library(spacexr)
 library(SpatialExperiment)
 library(SpotSweeper)
 library(tidyr)
+library(scran)
+library(scater)
 
 library(magick)
 library(sf)
@@ -124,11 +126,23 @@ library(tidyverse)
 
 Output files from SpaceRanger v4 are listed in `/segmented_outputs` folder, with the expected structure detailed in @sec-bkg-importing. We start with read in cell segmentation as a `sf` object, scaling factor `.json` file, and image file. We will use high resolution image, as it gives expected H&E details under segmented cell masks.
 
+
+```{r}
+library(OSTA.data)
+id <- "VisiumHD_HumanColon_Oliveira"
+pa <- OSTA.data_load(id)
+dir.create(td <- tempfile())
+unzip(pa, exdir=td)
+```
+
+
+
+
 ```{r load-other-vhdcell, message=FALSE, warning=FALSE}
 # Read the GeoJSON file of cell segmentation
-geo_data <- st_read("~/Desktop/cell_segmentations.geojson")
-scalef <- rjson::fromJSON(file = "~/Desktop/scalefactors_json.json")
-image <- image_read("~/Desktop/tissue_hires_image.png")
+geo_data <- st_read(file.path(td,"segmented_outputs","cell_segmentations.geojson"))
+scalef <- rjson::fromJSON(file = file.path(td,"segmented_outputs","spatial","scalefactors_json.json"))
+image <- image_read(file.path(td,"segmented_outputs","spatial","tissue_hires_image.png"))
 info <- image_info(image)
 ```
 
@@ -232,7 +246,7 @@ Load the segmented cell-level count matrix from Visium HD data.
 
 ```{r load-counts-vhdcell, message=FALSE, warning=FALSE}
 ## VHD cell
-countmat_file <- "~/Desktop/filtered_feature_cell_matrix.h5"
+countmat_file <- file.path(td,"segmented_outputs","filtered_feature_cell_matrix.h5")
 vhdcellsce <- DropletUtils::read10xCounts(countmat_file, col.names = TRUE)
 
 # Fix colnames or cell_id in colData
@@ -490,11 +504,11 @@ As previously shown, we can label transfer from single-cell reference to spatial
 ## SCE ref
 id <- "Chromium_HumanColon_Oliveira"
 pa <- OSTA.data_load(id)
-dir.create(td <- tempfile())
-unzip(pa, exdir=td)
+dir.create(td2 <- tempfile())
+unzip(pa, exdir=td2)
 
 # read into 'SingleCellExperiment'
-fs <- list.files(td, full.names=TRUE)
+fs <- list.files(td2, full.names=TRUE)
 h5 <- grep("h5$", fs, value=TRUE)
 sce <- read10xCounts(h5, col.names=TRUE)
 # add cell metadata
