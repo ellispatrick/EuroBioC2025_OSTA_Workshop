@@ -26,7 +26,10 @@ Suggests:
     DropletUtils, 
     ggspavis, 
     OSTA.data, 
+    scater,
+    scran,
     scuttle, 
+    sf, 
     spacexr, 
     SpatialExperiment,
     dplyr, 
@@ -35,7 +38,6 @@ Suggests:
     magick, 
     patchwork, 
     pheatmap, 
-    sf, 
     tidyr, 
     tidyverse
 URL: https://estellad.github.io/EuroBioC2025_OSTA_Workshop/

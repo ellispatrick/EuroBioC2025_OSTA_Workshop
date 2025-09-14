@@ -53,12 +53,17 @@ The relevant data are stored on Open Science Framework, and can be downloaded as
 
 ```{r}
 library(OSTA.data)
-# TODO
+# id <- "VisiumHD_HumanColon_Oliveira"
+# pa <- OSTA.data_load(id)
+# dir.create(td <- tempfile())
+# unzip(pa, exdir=td)
+# list.files(td)
 ```
 
 ### *R* / *Bioconductor* packages used
 
-Bioconductor: Banksy, DropletUtils, ggspavis, OSTA.data, scuttle, spacexr, SpatialExperiment, SpotSweeper CRAN: dplyr, igraph, ggplot2, magick, patchwork, pheatmap, sf, tidyr, tidyverse
+Bioconductor: Banksy, DropletUtils, ggspavis, OSTA.data, scater, scran, scuttle, spacexr, SpatialExperiment, SpotSweeper 
+CRAN: dplyr, igraph, ggplot2, magick, patchwork, pheatmap, sf, tidyr, tidyverse
 
 ### Time outline
 
@@ -106,17 +111,18 @@ library(ggplot2)
 library(dplyr)
 library(ggspavis)
 library(igraph)
+library(magick)
 library(OSTA.data)
 library(patchwork)
 library(pheatmap)
+library(scater)
+library(scran)
 library(scuttle)
+library(sf)
 library(spacexr)
 library(SpatialExperiment)
 library(SpotSweeper)
 library(tidyr)
-
-library(magick)
-library(sf)
 library(tidyverse)
 ```
 
@@ -318,6 +324,46 @@ plotPolygons(subset_data, annotate = "log_sum") +
           legend.key.width = unit(0.5, "lines"), 
           legend.key.height = unit(1, "lines")) & 
     scale_fill_gradientn(colors = pals::jet())
+```
+
+```{r}
+ge <- log1p(counts(vhdcellspe)["MMP2", ])
+subset_data$ge <- ge
+```
+
+```{r}
+# p <- plotPolygons(subset_data, annotate = "log_sum") +
+# p <- plotPolygons(subset_data, annotate = "subsets_mt_percent") +
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position = "none") +
+    scale_fill_gradientn(colors = pals::jet())
+ 
+
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent", colour = NA),
+  plot.background = element_rect(fill = "transparent", colour = NA),
+  legend.background = element_rect(fill = "transparent", colour = NA),
+  legend.box.background = element_rect(fill = "transparent", colour = NA),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()
+)
+
+p
+```
+
+```{r}
+p <- ggplot(subset_data) +
+    geom_sf(fill = NA, color = "lightyellow", linewidth = 0.5) +
+  xlim(c(4278, 4414)) +
+  ylim(c(3122, 3212))+
+    theme_void()
+p
+```
+
+```{r}
+png("~/Desktop/lightyellow_thick.png", width = 4, height = 2.5, units = "in", res = 300, bg = "transparent")
+print(p)
+dev.off()
 ```
 
 ### SpotSweeper
