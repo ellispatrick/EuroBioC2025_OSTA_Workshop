@@ -1,4 +1,4 @@
-Package: EuroBioC2025_OSTA_Workshop
+Package: EuroBioC2025OSTAWorkshop
 Title: EuroBioC2025 OSTA workshop on Visium HD cell-level analysis workflow
 Version: 2.0.1
 Authors@R: 
@@ -52,7 +52,7 @@ Depends:
     tidyr,
     tidySpatialExperiment,
     tidyverse,
-    Voyager,
+    Voyager
 Suggests: 
     knitr,
     rmarkdown,
