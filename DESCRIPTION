@@ -29,7 +29,7 @@ Depends:
     ggplot2,
     grDevices,
     grid,
-    here
+    here,
     igraph,
     magick,
     OSTA.data,
