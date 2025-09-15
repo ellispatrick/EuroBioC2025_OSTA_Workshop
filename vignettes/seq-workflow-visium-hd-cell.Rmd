@@ -60,7 +60,7 @@ id <- "VisiumHD_HumanColon_Oliveira"
 pa <- OSTA.data_load(id)
 dir.create(td <- tempfile())
 unzip(pa, exdir=td)
-list.files(td)
+list.files(td, "segmented_outpus")
 ```
 
 We also prepared a reader Visium HD segmented output at `./vignettes/utils.R`.
@@ -157,13 +157,15 @@ no_legend <- theme(legend.position = "none")
 
 gradient_theme <- theme(plot.title = element_text(hjust = 0.5),
                         legend.title = element_blank(),
-                        legend.key.width = unit(0.5, "lines"), 
-                        legend.key.height = unit(1, "lines"))
+                        legend.key.width = grid::unit(0.5, "lines"), 
+                        legend.key.height = grid::unit(1, "lines"))
 
-thin_discrete_legend <- theme(legend.key.size = unit(0.5, "lines"))
+thin_discrete_legend <- theme(legend.key.size = grid::unit(0.5, "lines"))
 
 common_args_heatmap <- list(cellwidth=10, cellheight=10, 
                             treeheight_row=5, treeheight_col=5)
+
+enlarge_legend_dot <- guides(col=guide_legend(override.aes=list(size=3)))
 ```
 
 ```{r osta_download}
@@ -338,7 +340,6 @@ rownames(sce) <- make.unique(rowData(sce)$Symbol)
 
 # exclude cells deemed to be of low-quality
 sce <- sce[, sce$QCFilter == "Keep"]
-
 ```
 
 
@@ -383,7 +384,6 @@ load(here::here("data/rctd_result_level1.RData"))
 !!! Do not run this in the workshop it will take 30 mins.
 
 ```{r rctd-reproduce-run, warning=FALSE, message=FALSE, eval=FALSE}
-
 # ## Perform initial preprocessing of the visiumHD and single cell reference data
 # rctd_data <- createRctd(spatial_experiment = vhdsub,              # Our visium HD data
 #                         reference_experiment = sce[, down_sample],# Down-sampled single cell reference
@@ -392,7 +392,7 @@ load(here::here("data/rctd_result_level1.RData"))
 # 
 # ## Perform the deconvolution.
 # rctd_result_level1 <- runRctd(rctd_data, max_cores = 4, rctd_mode = "doublet")
-
+# # save(rctd_result_level1, file = here::here("data/rctd_result_level1.RData"))
 ```
 
 Note: RCTD does have some internal QC, so lets check nothing was filtered out prior to running deconvolution. 
@@ -422,10 +422,12 @@ vhdsub$cellType <- rctd_result_level1$first_type[match(colnames(vhdsub), colname
 table(vhdsub$cellType)
 ```
 ```{r rctd-result-discrete, fig.width=8, fig.height=3, message=FALSE}
-p0 <- plotSpatialFeature(vhdsub, features = "cellTypeClass", palette = unname(pals::okabe()),
-                   colGeometryName = "updatecellSeg")
-p1 <- plotSpatialFeature(vhdsub, features = "cellType", palette = unname(pals::trubetskoy()),
-                   colGeometryName = "updatecellSeg")
+p0 <- plotSpatialFeature(vhdsub, features = "cellTypeClass", 
+                   colGeometryName = "updatecellSeg") + 
+  scale_fill_manual(values = unname(pals::okabe()))
+p1 <- plotSpatialFeature(vhdsub, features = "cellType", 
+                   colGeometryName = "updatecellSeg") + 
+  scale_fill_manual(values = unname(pals::trubetskoy()))
 
 (p0 | p1) & thin_discrete_legend
 ```
@@ -483,6 +485,7 @@ tmp <- Banksy::clusterBanksy(tmp, lambda = 0.2, npcs = 20, resolution = 0.8)
 vhdsub$Banksy <- tmp$clust_M0_lam0.2_k50_res0.8
 
 table(vhdsub$Banksy)
+# save(vhdsub, file = here::here("data/vhdsub.RData"))
 ```
 
 Now we can visualize clustering result spatially.
@@ -490,7 +493,8 @@ Now we can visualize clustering result spatially.
 ```{r clus-spa-umap, fig.width=5, fig.height=3.5, warning=FALSE, message=FALSE}
 plotSpatialFeature(vhdsub, features = "Banksy", 
                    colGeometryName = "updatecellSeg") +
-  scale_fill_manual(values = unname(pals::kelly()))
+  scale_fill_manual(values = unname(pals::kelly())) + 
+  thin_discrete_legend
 ```
 
 Next, we can perform differential gene expresison (DGE) analysis to identify markers for each cluster; c.f. @sec-crs-signatures. We also compute the cluster-wise mean expression of selected markers:
@@ -537,28 +541,21 @@ p2 <- plotSpatialFeature(vhdsub, features = "DES",
 
 ## Downstream
 
-### Concordance of clustering & deconvolution
+### Concordance of deconvolution & clustering
 
 We can visualize the results spatially:
 
 ```{r plt-dec-clu-xy, fig.width=10, fig.height=4, message=FALSE}
 
-# plotCoords(vhdsub, annotate="Banksy", point_size=1.6, y_reverse = FALSE,
-#            in_tissue = NULL, pal=unname(pals::kelly())) + plot_spacer() +
-# plotCoords(vhdsub, annotate="cellType", point_size=1.6, y_reverse = FALSE,
-#            in_tissue = NULL, pal=unname(pals::trubetskoy())) + 
-#     plot_layout(nrow=1, widths=c(1, 0.05, 1)) & 
-#     theme(legend.key.size=unit(0, "lines"))
+p0 <- plotSpatialFeature(vhdsub, features = "cellType", 
+                         colGeometryName = "updatecellSeg") + 
+  scale_fill_manual(values = unname(pals::trubetskoy())) + 
+  ggtitle("RCTD") 
 
-p0 <- plotSpatialFeature(vhdsub, features = "Banksy", 
+p1 <- plotSpatialFeature(vhdsub, features = "Banksy", 
                    colGeometryName = "updatecellSeg") + 
   scale_fill_manual(values = unname(pals::kelly())) + 
   ggtitle("Banksy")
-
-p1 <- plotSpatialFeature(vhdsub, features = "cellType", 
-                         colGeometryName = "updatecellSeg") + 
-  scale_fill_manual(values = unname(pals::trubetskoy())) + 
-  ggtitle("cellType") 
 
 p0 + p1 +
   plot_layout(nrow=1) &
@@ -583,11 +580,13 @@ We next quantify spatial proximity between annotated cell types. The `getPairwis
 
 
 ```{r spicy-pairwise-kcross}
+load(here::here("data/vhdsub.RData"))
 crossK = getPairwise(vhdsub, 
                      r = 25, 
                      cellType = "cellType",
                      imageID = "sample_id",
-                     spatialCoords = c("X", "Y"))
+                     spatialCoords = c("pxl_col_in_fullres", 
+                                       "pxl_row_in_fullres"))
 ```
 
 
@@ -600,9 +599,11 @@ imageCrossPlot(crossK)
 
 We can visualise the spatial arrangement of our annotated cells to build intuition for these statistics. This helps confirm that any strong pairwise signals are visible in the image and not driven by a handful of cells.
 
-```{r ann-spatial-scatter}
+```{r ann-spatial-scatter, fig.height=4, fig.width=6}
 vhdsub |> 
-  ggplot(aes(X, Y, colour = cellType)) + geom_point() + scale_color_brewer(palette = "Set1") + theme_classic()
+  ggplot(aes(pxl_col_in_fullres, pxl_row_in_fullres, colour = cellType)) + 
+  geom_point(size=0.5) + scale_color_brewer(palette = "Set1") + theme_classic() + 
+  enlarge_legend_dot
 ```
 
 
@@ -635,7 +636,7 @@ resultsKontextual <- Kontextual(
   parentDf = parentDf,
   imageID = "sample_id",
   cellType = "cellType",
-  spatialCoords = c("X", "Y"),
+  spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
   r = 20
 )
 ```
@@ -643,7 +644,7 @@ resultsKontextual <- Kontextual(
 
 Lets visualise the results. 
 
-```{r ktx-scatter-plot}
+```{r ktx-scatter-plot, fig.height=5, fig.width=8}
 plotKontext <- resultsKontextual |>
   ggplot(aes(original, kontextual, label = test)) +
   geom_point() +
@@ -658,8 +659,7 @@ ggplotly(plotKontext)
 We can then inspect radii-dependent curves (for example Myeloid around Tumour) to confirm at which scales the effect appears, which is often informative for processes like invasion fronts or peritumoural niches.
 
 
-```{r ktx-scale-curve}
-
+```{r ktx-scale-curve, fig.height=4, fig.width=6, warning=FALSE, message=FALSE}
 curves <- kontextCurve(
   cells = vhdsub,
   from = "Tumor",
@@ -671,22 +671,22 @@ curves <- kontextCurve(
   imageID = "sample_id"
 )
 
-kontextPlot(curves)
+kontextPlot(curves) + theme_bw()
 ```
 
 To aid interpretation, we can also re-plot the spatial map with the immune context greyed and the two focal types coloured. This quickly links our statistical findings to a tangible patterns in the tissue.
 
-```{r ktx-spatial-highlight}
+```{r ktx-spatial-highlight, fig.height=4, fig.width=5.5, warning=FALSE, message=FALSE}
 
 df <- colData(vhdsub) |>
   as.data.frame() |>
   cbind(spatialCoords(vhdsub))
 
 ggplot(data = filter(df, cellType %in% c("Tumor", "Myeloid")), 
-       mapping = aes(X, Y, color = cellType)) + 
+       mapping = aes(pxl_col_in_fullres, pxl_row_in_fullres, color = cellType))+ 
   geom_point(data = dplyr::filter(df, cellType %in% immune), 
-             colour = "darkgrey") +
-  geom_point()
+             colour = "darkgrey", size = 0.5) +
+  geom_point(size = 0.5) + enlarge_legend_dot + theme_classic()
   
 ```
 
@@ -710,7 +710,6 @@ In practice, spatioMark first computes local abundances of each cell type around
 First, we need to quantify the abundance of each cell type around each cell.
 
 ```{r smark-abundances}
-
 vhdsub <- getAbundances(vhdsub,
   r = 25,
   cellType = "cellType",
@@ -721,49 +720,51 @@ vhdsub <- getAbundances(vhdsub,
 
 Next, we focus on whether Myeloid cells show distinct expression patterns when they are located close to Tumour cells.
 
-
 ```{r smark-statechanges-fit}
-stateChanges <- calcStateChanges(
-  cells = vhdsub,
-  type = "abundances",
-  from = "Myeloid",
-  to = "Tumor",
-  test = "nb",
-  imageID = "sample_id"
-)
-
-
-stateChanges |> head(20)
+# stateChanges <- calcStateChanges(
+#   cells = vhdsub,
+#   type = "abundances",
+#   from = "Myeloid",
+#   to = "Tumor",
+#   test = "nb",
+#   imageID = "sample_id"
+# )
+# 
+# stateChanges |> head(20)
 ```
 The output is a ranked list of genes, highlighting markers that change as Myeloid cells are near tumour cells. SPP1 is known to be expressed in tumour-associated macrophages.
 
 ```{r smark-plot-spp1}
-p <- plotStateChanges(
-  cells = vhdsub,
-  image = "sample01",
-  type = "abundances",
-  from = "Myeloid",
-  to = "Tumor",
-  marker = "SPP1",
-  imageID = "sample_id",
-  size = 1,
-  shape = 19,
-  interactive = FALSE,
-  method = "lm"
-)
-
-p[[1]]
+# p <- plotStateChanges(
+#   cells = vhdsub,
+#   image = "sample01",
+#   type = "abundances",
+#   from = "Myeloid",
+#   to = "Tumor",
+#   marker = "SPP1",
+#   imageID = "sample_id",
+#   size = 1,
+#   shape = 19,
+#   interactive = FALSE,
+#   method = "lm"
+# )
+# 
+# p[[1]]
 ```
 
 
 However, there are some genes that not expressed in macrophages such as CEACAM6 which are likely lateral spillover or diffusion.
 
 
-```{r smark-ceacam6-check}
-sce[,down_sample] |>
+```{r smark-ceacam6-check, fig.height=4, fig.width=6}
+sce[, down_sample] |>
   join_features(features = "CEACAM6", shape = "wide") |>
-  ggplot(aes(x = Level1, y = CEACAM6)) + 
-    stat_summary(fun = mean, geom = "bar")
+  ggplot(aes(x = Level1, y = CEACAM6, fill = Level1)) + 
+  stat_summary(fun = mean, geom = "bar") + 
+  scale_fill_brewer(palette = "Set1") + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  thin_discrete_legend
 ```
 
 
@@ -772,31 +773,30 @@ Because we already computed RCTD weights, we can mitigate contamination by addin
 
 
 ```{r smark-add-contam-rctd}
-contam <- assay(rctd_result_level1,1) |>
-  t() |>
-  as.matrix() |>
-  as.data.frame()
-
-
-reducedDim(vhdsub, "RCTD") <- contam[match(colnames(vhdsub), rownames(contam)),]
+# contam <- assay(rctd_result_level1,1) |>
+#   t() |>
+#   as.matrix() |>
+#   as.data.frame()
+# 
+# reducedDim(vhdsub, "RCTD") <- contam[match(colnames(vhdsub), rownames(contam)),]
 
 ```
 
 
 
 ```{r smark-statechanges-contam}
-stateChangesCon <- calcStateChanges(
-  cells = vhdsub,
-  type = "abundances",
-  from = "Myeloid",
-  to = "Tumor",
-  test = "nb",
-  imageID = "sample_id",
-  contamination = "RCTD"
-)
-
-
-stateChangesCon |> filter(marker == "CEACAM6")
+# stateChangesCon <- calcStateChanges(
+#   cells = vhdsub,
+#   type = "abundances",
+#   from = "Myeloid",
+#   to = "Tumor",
+#   test = "nb",
+#   imageID = "sample_id",
+#   contamination = "RCTD"
+# )
+# 
+# 
+# stateChangesCon |> filter(marker == "CEACAM6")
 ```
 
 
@@ -805,41 +805,40 @@ stateChangesCon |> filter(marker == "CEACAM6")
 You can try using a finer resolution of cell type classified by RCTD.
 
 ```{r level2_annotation, eval=FALSE}
-data("rctd_result_level2.RData", package = "EuroBioC2025_OSTA_Workshop")
+# data("rctd_result_level2.RData", package = "EuroBioC2025_OSTA_Workshop")
 ```
 
 
 Or you can try using a different deconvulation algorithm.
 
 ```{r CARD, eval=FALSE}
-library(CARDspa)
-set.seed(2025)
-vhd2 <- vhdsub
-colnames(spatialCoords(vhd2)) <- c("x", "y")
-sce2 <-sce[, down_sample]
-counts(vhd2) <- as(counts(vhd2), "sparseMatrix")
-counts(sce2) <- as(counts(sce2), "sparseMatrix")
-CARD_obj <- CARD_deconvolution(
-    spe = vhd2,
-    sce = sce2,
-    sc_count = NULL,
-    sc_meta = NULL,
-    spatial_count = NULL,
-    spatial_location = NULL,
-    ct_varname = "Level2",
-    ct_select = NULL,       # decon with all sce$Annogrp cell types
-    sample_varname = NULL,  # use all sce as one ref sample 
-    mincountgene = 0,
-    mincountspot = 0
-)
-
-# a matrix/data.frame of probabilities per cell (rows) × cell types (cols)
-P <- CARD_obj$Proportion_CARD[vhdsub$cell_id, ]
-
-# cell type with the largest probability in each row
-vhdsub$cellType2 <- colnames(P)[max.col(P, ties.method = "first")]
-
-reducedDim(vhdsub, "CARD") <- as.data.frame(P)
+# set.seed(2025)
+# vhd2 <- vhdsub
+# colnames(spatialCoords(vhd2)) <- c("x", "y")
+# sce2 <-sce[, down_sample]
+# counts(vhd2) <- as(counts(vhd2), "sparseMatrix")
+# counts(sce2) <- as(counts(sce2), "sparseMatrix")
+# CARD_obj <- CARD_deconvolution(
+#     spe = vhd2,
+#     sce = sce2,
+#     sc_count = NULL,
+#     sc_meta = NULL,
+#     spatial_count = NULL,
+#     spatial_location = NULL,
+#     ct_varname = "Level2",
+#     ct_select = NULL,       # decon with all sce$Annogrp cell types
+#     sample_varname = NULL,  # use all sce as one ref sample 
+#     mincountgene = 0,
+#     mincountspot = 0
+# )
+# 
+# # a matrix/data.frame of probabilities per cell (rows) × cell types (cols)
+# P <- CARD_obj$Proportion_CARD[vhdsub$cell_id, ]
+# 
+# # cell type with the largest probability in each row
+# vhdsub$cellType2 <- colnames(P)[max.col(P, ties.method = "first")]
+# 
+# reducedDim(vhdsub, "CARD") <- as.data.frame(P)
 ```
 
 
