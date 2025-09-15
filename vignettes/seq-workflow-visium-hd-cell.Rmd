@@ -11,20 +11,23 @@ vignette: >
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
-  comment = "#>"
+  comment = "#>",
+  warning=FALSE, 
+  message=FALSE
 )
 ```
 
 # Workflow: Visium HD cell-level
 
-Authors: Yixing E. Dong[^1], ABC[^2]. <br/> Last modified: 23 July, 2025.
+Authors: Yixing E. Dong[^1], Ellis Patrick[^2]. <br/> Last modified: 23 July, 2025.
 
 [^1]: University of Lausanne, Lausanne, Switzerland
 
-[^2]: ABC
+[^2]: University of Sydney, Sydney, Australia
 
 ## Instructor name and contact information
 -   Yixing Estella Dong (estella.yixing.dong@gmail.com)
+-   Ellis Patrick (ellis.patrick@sydney.edu.au)
 
 ## Workshop Description
 
@@ -53,12 +56,14 @@ The relevant data are stored on Open Science Framework, and can be downloaded as
 
 ```{r}
 library(OSTA.data)
-# id <- "VisiumHD_HumanColon_Oliveira"
-# pa <- OSTA.data_load(id)
-# dir.create(td <- tempfile())
-# unzip(pa, exdir=td)
-# list.files(td)
+id <- "VisiumHD_HumanColon_Oliveira"
+pa <- OSTA.data_load(id)
+dir.create(td <- tempfile())
+unzip(pa, exdir=td)
+list.files(td)
 ```
+
+We also prepared a reader Visium HD segmented output at `./vignettes/utils.R`.
 
 ### *R* / *Bioconductor* packages used
 
@@ -106,319 +111,351 @@ As of June 2025, Visium HD enabled direct output of H&E segmented cell-level dat
 
 ```{r deps, message=FALSE, warning=FALSE}
 library(Banksy)
+library(CARDspa)
+library(dplyr)
 library(DropletUtils)
 library(ggplot2)
-library(dplyr)
-library(ggspavis)
+library(grDevices)
+library(grid)
+library(here)
 library(igraph)
 library(magick)
 library(OSTA.data)
 library(patchwork)
 library(pheatmap)
+library(plotly)
+library(rlang)
+library(S4Vectors)
 library(scater)
 library(scran)
 library(scuttle)
 library(sf)
+library(SingleCellExperiment)
 library(spacexr)
 library(SpatialExperiment)
+library(SpatialFeatureExperiment)
+library(spicyR)
 library(SpotSweeper)
+library(Statial)
 library(tidyr)
+library(tidySpatialExperiment)
 library(tidyverse)
+library(Voyager)
 ```
 
 ## Load spatial data
 
 Output files from SpaceRanger v4 are listed in `/segmented_outputs` folder, with the expected structure detailed in @sec-bkg-importing. We start with read in cell segmentation as a `sf` object, scaling factor `.json` file, and image file. We will use high resolution image, as it gives expected H&E details under segmented cell masks.
 
+```{r prep}
+source(here::here("vignettes/utils.R"))
+
+# ggplot theme alias
+center_title <- theme(plot.title = element_text(hjust = 0.5))
+
+no_legend <- theme(legend.position = "none")
+
+gradient_theme <- theme(plot.title = element_text(hjust = 0.5),
+                        legend.title = element_blank(),
+                        legend.key.width = unit(0.5, "lines"), 
+                        legend.key.height = unit(1, "lines"))
+
+thin_discrete_legend <- theme(legend.key.size = unit(0.5, "lines"))
+
+common_args_heatmap <- list(cellwidth=10, cellheight=10, 
+                            treeheight_row=5, treeheight_col=5)
+```
+
+```{r osta_download}
+library(OSTA.data)
+id <- "VisiumHD_HumanColon_Oliveira"
+pa <- OSTA.data_load(id)
+dir.create(td <- tempfile())
+unzip(pa, exdir=td)
+```
+
+
 ```{r load-other-vhdcell, message=FALSE, warning=FALSE}
-# Read the GeoJSON file of cell segmentation
-geo_data <- st_read("~/Desktop/cell_segmentations.geojson")
-scalef <- rjson::fromJSON(file = "~/Desktop/scalefactors_json.json")
-image <- image_read("~/Desktop/tissue_hires_image.png")
-info <- image_info(image)
+# Read in Visium HD cell segmented data as SpatialFeatureExperiment object
+vhdsfe <- readVisiumHDCellSeg(td, res = "hires")
+vhdsfe
 ```
 
 First, we need to scale the coordinates to match the high resolution image. In addition, the y-axis coordinates should be flipped, as R uses a different origin than the image coordinate system. While `ggspavis` manages this internally for Visium, we will proceed with a manual plotting approach for Visium HD polygons (rather than cell centroid x and y) to maintain clarity.
 
-```{r scale-flip-polygons, message=FALSE, warning=FALSE}
-# Multiply all coordinates by the scaling factor of high resolution image
-st_geometry(geo_data) <- st_geometry(geo_data) * scalef$tissue_hires_scalef
-
-# Flip axis by flip y coordinates with image height  - y axis
-st_geometry(geo_data) <- st_sfc( 
-    lapply(st_geometry(geo_data), function(geom) {
-      coords <- st_coordinates(geom)
-      coords[, 2] <- info$height - coords[, 2]
-      st_polygon(list(matrix(coords[, 1:2], ncol = 2)))
-    }),
-    crs = st_crs(geo_data)
-)
-```
-
 To keep runtimes low, our downstream analysis will be performed on a subset area of 16 µm bins (1/64 of the data coverage area).
 
 ```{r subset-polygons, message=FALSE, warning=FALSE}
-# Get data coverage and subsetted bounding box
-.rng <- \(geo_data) {
-    cov <- st_bbox(geo_data)
-    xs <- cov[c(1, 3)]; ys <- cov[c(2, 4)]
-    x1 <- xs[1] + 4*(xs[2]-xs[1])/8; x2 <- xs[2] - 3*(xs[2]-xs[1])/8
-    y1 <- ys[1] + 4*(ys[2]-ys[1])/8; y2 <- ys[2] - 3*(ys[2]-ys[1])/8
-    list(box=c(x1, x2, y1, y2), cov=c(xs, ys))
-}
-geo_data_rng <- .rng(geo_data)
-
-# Subset the GeoJSON to geometries that intersect with the bounding box
-bbox_polygon <- st_as_sfc(st_bbox(geo_data_rng$box, crs = st_crs(geo_data)))
-subset_data <- geo_data[st_intersects(geo_data, bbox_polygon, sparse = FALSE), ]
-subset_data$cell_id <- as.character(subset_data$cell_id)
-head(subset_data)
+vhdsub <- subsetVisiumHD(vhdsfe,
+                         xmin = 4217.001, xmax = 4462.094,
+                         ymin = 2996.551, ymax = 3225.485)
 ```
 
 Here, as we have restricted the analysis to only 1/64 of the entire tissue coverage, the number of cells in the subset `sf` object should also be reduced by roughly this fraction, depending on tissue density.
 
 ```{r dim-polygons, message=FALSE, warning=FALSE}
-nrow(geo_data)/nrow(subset_data)
+ncol(vhdsfe)/ncol(vhdsub)
 ```
 
 Show subset region used for analysis:
 
 ```{r plt-subset-cov-box, fig.width=6, fig.height=4, message=FALSE}
-.box <- \(rng, roi, lty, lwd, col) {
-    data <- data.frame(xmin = rng[[roi]]["xmin"], xmax = rng[[roi]]["xmax"],
-                       ymin = rng[[roi]]["ymin"], ymax = rng[[roi]]["ymax"])
-    geom_rect(data = data, 
-              aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-              color = col, fill = NA, linetype = lty, linewidth = lwd)
+getBoxRange <- function(obj){
+  data <- spatialCoords(obj) %>% as.data.frame() %>% 
+    summarise(xmin = min(pxl_col_in_fullres), xmax = max(pxl_col_in_fullres),
+              ymin = min(pxl_row_in_fullres), ymax = max(pxl_row_in_fullres))
+  return(data)
 }
-cov <- .box(rng = geo_data_rng, roi = "cov", lty = 2, lwd = 1/2, col = "#3b3b3b")
-box <- .box(rng = geo_data_rng, roi = "box", lty = 4, lwd = 2/3, col = "black")
 
-ggplot() + 
-    annotation_raster(xmin = 0, xmax = info$width, ymin = 0, ymax = info$height, 
-                      image) + 
-    coord_fixed(xlim = c(0, info$width), ylim = c(0, info$height), 
-                expand = FALSE) + cov + box + 
-    ggtitle("Grey: data coverage; Black: subset region") + 
-    theme_void() + theme(plot.title = element_text(hjust = 0.5))
+plotBox <- function(data, col, lty, lwd){
+  geom_rect(data = data,
+            aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax), 
+            color = col, fill = NA, linetype = lty, linewidth = lwd)
+}
+
+plotImage(vhdsfe) + 
+  plotBox(getBoxRange(vhdsfe), col = "#3b3b3b", lty = 2, lwd = 1/2) +
+  plotBox(getBoxRange(vhdsub), col = "black", lty = 4, lwd = 2/3) +
+  ggtitle("Grey: data coverage; Black: subset region") + 
+  center_title
 ```
 
 Plot cell polygons overlay H&E image for this subset region (in black box). Here is an overview of the subset of tissue section that we will work on:
 
-```{r plt-subset-he-polygon, fig.width=12, fig.height=4, message=FALSE}
-#| code-fold: true
-# Plot raster
-p0 <- ggplot() +
-    annotation_raster(image, 
-                      xmin = 0, xmax = info$width, ymin = 0, ymax = info$height) +
-    coord_fixed(expand = FALSE,
-                xlim = geo_data_rng$box[1:2], ylim = geo_data_rng$box[3:4]) 
+```{r plt-subset-he-polygon, fig.width=8, fig.height=4, message=FALSE}
+vhdsub$polygon <- 1
+p0 <- plotImage(vhdsub, bbox = unlist(getBoxRange(vhdsub))) 
 
-# Add sf layer
-p <- p0 +
-    geom_sf(data = subset_data, fill = NA, color = "white", size = 0.3) + 
-    theme(axis.text = element_blank(),
-          axis.ticks = element_blank())
+p1 <- plotSpatialFeature(vhdsub, bbox = unlist(getBoxRange(vhdsub)),
+                         features = "polygon", alpha = 0.1, fill = NA, color = "white",
+                         colGeometryName = "updatecellSeg", image_id = "hires") + 
+  no_legend
 
-# Just polygons
-p1 <- ggplot(subset_data) +
-    geom_sf(fill = "lightblue", color = "white") +
-    theme_void()
-
-# Show plots
 (p0 + ggtitle("H&E region") |
-    p + ggtitle("Overlayed with cell boundaries") |
-    p1 + ggtitle("Cells")) +
-    plot_layout(nrow=1) & theme(plot.title = element_text(hjust = 0.5))
-```
-
-## Load count data
-
-Load the segmented cell-level count matrix from Visium HD data.
-
-```{r load-counts-vhdcell, message=FALSE, warning=FALSE}
-## VHD cell
-countmat_file <- "~/Desktop/filtered_feature_cell_matrix.h5"
-vhdcellsce <- DropletUtils::read10xCounts(countmat_file, col.names = TRUE)
-
-# Fix colnames or cell_id in colData
-vhdcellsce$cell_id <- colnames(vhdcellsce) <- 
-    gsub("^cellid_0*([1-9][0-9]*|0)-1$", "\\1", colnames(vhdcellsce))
-
-# Subset to region in sf
-vhdcellsce <- vhdcellsce[, colnames(vhdcellsce) %in% subset_data$cell_id]
-
-# Update gene and cell names
-rownames(vhdcellsce) <- rowData(vhdcellsce)$Symbol
-rownames(vhdcellsce) <- make.unique(rownames(vhdcellsce))
-```
-
-Obtain cell centroids from the subset `sf` object, and use them as spatial coordinates in the `SpatialExperiment` object.
-
-```{r vhd-spacoords, message=FALSE, warning=FALSE}
-centroids <- st_centroid(subset_data)
-coords <- st_coordinates(centroids)
-
-# sanity check on ordering of cell ids
-all(centroids$cell_id == colnames(vhdcellsce))
-
-head(coords)
-```
-
-Now, we construct a `SpatialExperiment` object from the cell-level count matrix.
-
-```{r make-vhd, message=FALSE, warning=FALSE}
-# construct a SPE, subsetted to region of interest
-vhd <- SpatialExperiment(
-    assays = list(counts = as(counts(vhdcellsce), "dgCMatrix")),
-    rowData = rowData(vhdcellsce),
-    colData = cbind(colData(vhdcellsce), coords),
-    spatialCoordsNames = c("X", "Y")
-)
-vhd
+  p1 + ggtitle("Overlayed with cell boundaries")) &
+  center_title
 ```
 
 ## Quality control
 
 Get cell-level QC metrics for visualization.
 
-```{r qc-metrics-vhd, message=FALSE, warning=FALSE}
+```{r qc-metrics-vhdsub, message=FALSE, warning=FALSE}
 # Visualize library size to the polygons
-sub <- list(mt = grep("^MT-", rownames(vhd)))
-vhd <- addPerCellQCMetrics(vhd, subsets = sub)
-vhd$log_sum <- log1p(vhd$sum)
+sub <- list(mt = grep("^MT-", rownames(vhdsub)))
+vhdsub <- addPerCellQCMetrics(vhdsub, subsets = sub)
+vhdsub$log_sum <- log1p(vhdsub$sum)
 
-CD <- as.data.frame(colData(vhd))
-head(CD %>% select(cell_id, sum, log_sum, subsets_mt_percent))
+CD <- colData(vhdsub) %>% as.data.frame()
+head(CD %>% select(Barcode, sum, log_sum, subsets_mt_percent))
 ```
 
-Merge cell-level metadata into `sf` object with cell segmentation coordinates in the subset region.
+```{r loglib-mitopct, fig.width=8, fig.height=4, message=FALSE}
+p0 <- plotSpatialFeature(vhdsub, features = "log_sum", 
+                   colGeometryName = "updatecellSeg") + 
+  ggtitle("log library size") 
 
-```{r sf-join-qc-metric, message=FALSE, warning=FALSE}
-subset_data <- subset_data %>% 
-    left_join(CD %>% select(cell_id, log_sum, subsets_mt_percent))
-head(subset_data)
+p1 <- plotSpatialFeature(vhdsub, features = "subsets_mt_percent", 
+                         colGeometryName = "updatecellSeg") + 
+  ggtitle("% mitochondrial") 
+
+(p0 | p1) &
+  gradient_theme & 
+  scale_fill_gradientn(colors = pals::jet())
 ```
 
-We can visualize the metrics could be used for quality control.
-
-```{r plt-qc-metrics, fig.width=8, fig.height=3.5, message=FALSE}
-#| code-fold: true
-# helper
-plotPolygons <- function(objsf, annotate = "Cluster"){
-    ggplot(objsf) +
-      geom_sf(aes(fill = get(annotate)), color = "grey", linewidth = 0.1) +
-      labs(fill = annotate) + 
-      theme_void() + 
-      theme(axis.text = element_blank(),
-            axis.ticks = element_blank())
-}
-
-plotPolygons(subset_data, annotate = "log_sum") + 
-    ggtitle("log library size") + 
-    plotPolygons(subset_data, annotate = "subsets_mt_percent") + 
-    ggtitle("% mitochondrial") + 
-    plot_layout(nrow = 1) & 
-    theme(plot.title = element_text(hjust = 0.5),
-          legend.title=element_blank(),
-          legend.key.width = unit(0.5, "lines"), 
-          legend.key.height = unit(1, "lines")) & 
-    scale_fill_gradientn(colors = pals::jet())
-```
-
-```{r}
-ge <- log1p(counts(vhdcellspe)["MMP2", ])
-subset_data$ge <- ge
-```
-
-```{r}
-# p <- plotPolygons(subset_data, annotate = "log_sum") +
-# p <- plotPolygons(subset_data, annotate = "subsets_mt_percent") +
-    theme(plot.title = element_text(hjust = 0.5),
-          legend.position = "none") +
-    scale_fill_gradientn(colors = pals::jet())
- 
-
-p <- p + theme(
-  panel.background = element_rect(fill = "transparent", colour = NA),
-  plot.background = element_rect(fill = "transparent", colour = NA),
-  legend.background = element_rect(fill = "transparent", colour = NA),
-  legend.box.background = element_rect(fill = "transparent", colour = NA),
-  panel.grid.major = element_blank(),
-  panel.grid.minor = element_blank()
-)
-
-p
-```
-
-```{r}
-p <- ggplot(subset_data) +
-    geom_sf(fill = NA, color = "lightyellow", linewidth = 0.5) +
-  xlim(c(4278, 4414)) +
-  ylim(c(3122, 3212))+
-    theme_void()
-p
-```
-
-```{r}
-png("~/Desktop/lightyellow_thick.png", width = 4, height = 2.5, units = "in", res = 300, bg = "transparent")
-print(p)
-dev.off()
-```
 
 ### SpotSweeper
 
 SpotSweeper determine outliers based on low log-library size, few uniquely detected features, or high mitochondrial count fraction:
 
-```{r qc-vhd-local}
-vhd <- localOutliers(vhd, metric="sum", direction="lower", log=TRUE)
-vhd <- localOutliers(vhd, metric="detected", direction="lower", log=TRUE)
-vhd <- localOutliers(vhd, metric="subsets_mt_percent", direction="higher", log=TRUE)
-vhd$discard <- 
-    vhd$sum_outliers | 
-    vhd$detected_outliers | 
-    vhd$subsets_mt_percent_outliers
+```{r qc-vhdsub-local}
+vhdsub <- localOutliers(vhdsub, metric="sum", direction="lower", log=TRUE)
+vhdsub <- localOutliers(vhdsub, metric="detected", direction="lower", log=TRUE)
+vhdsub <- localOutliers(vhdsub, metric="subsets_mt_percent", direction="higher", log=TRUE)
+vhdsub$discard <- 
+    vhdsub$sum_outliers | 
+    vhdsub$detected_outliers | 
+    vhdsub$subsets_mt_percent_outliers
 # tabulate number of cells retained vs. removed by any criterion 
-table(vhd$discard)
+table(vhdsub$discard)
 ```
 
 We can visualize the local outliers identified by `SpotSweeper` in space. It is difficult to see as we only have few small cells identified as outliers per flag.
 
-```{r qc-vhd-plt, fig.width=7.5, fig.height=2.5, message=FALSE}
-#| code-fold: true
-CD <- as.data.frame(colData(vhd)) 
-subset_data <- subset_data %>%
-    left_join(CD %>% select(cell_id, sum_outliers, detected_outliers, discard))
+```{r qc-vhdsub-plt, fig.width=8, fig.height=3, message=FALSE}
+common_args_qc <- list(fill = NA, color = "grey90", linewidth = 0.1, 
+                    colGeometryName = "updatecellSeg")
 
-plotPolygons(subset_data, annotate="sum_outliers") + 
-    ggtitle("low_lib_size") +
-    plotPolygons(subset_data, annotate="detected_outliers") + 
-    ggtitle("low_n_features") +
-    plotPolygons(subset_data, annotate="discard") + 
-    ggtitle("discard") +
-    plot_layout(nrow=1, guides="collect") & 
-    theme(plot.title=element_text(hjust=0.5),
-          legend.key.size=unit(0, "lines")) &
-    guides(col=guide_legend(override.aes=list(size=3))) & 
-    scale_fill_manual("discard", values=c("white", "red"))
+p0 <- exec(plotSpatialFeature, 
+           vhdsub, features = "sum_outliers", !!!common_args_qc) +
+  ggtitle("low_lib_size") 
+
+p1 <- exec(plotSpatialFeature, 
+           vhdsub, features = "detected_outliers", !!!common_args_qc) +
+  ggtitle("low_n_features") 
+
+p2 <- exec(plotSpatialFeature, 
+           vhdsub, features = "discard", !!!common_args_qc) +
+  ggtitle("discard")
+
+p0 + p1 + p2 +
+  plot_layout(nrow=1, guides="collect") &
+  thin_discrete_legend & center_title &
+  scale_fill_manual("discard", values=c("white", "red"))
+
 ```
+
+## Annotating our cells
+
+### Load reference
+
+This Visium HD dataset provides matched scRNA-seq for the same tissue, which avoids tissue and batch effects that often complicate label transfer. The `Level1` column contains broad, interpretable populations that are well suited for deconvolution and downstream interpretation. We will use these labels to map likely cell identities onto our Visium HD cells.
+
+First lets load in the data from the `OSTA.data` package.
+
+```{r ann-load-sce, message=FALSE, warning=FALSE}
+## SCE ref
+id <- "Chromium_HumanColon_Oliveira"
+
+## Download the data for OSTA.data and unzip the files
+pa <- OSTA.data_load(id)
+dir.create(td2 <- tempfile())
+unzip(pa, exdir=td2)
+
+# read into 'SingleCellExperiment'
+fs <- list.files(td2, full.names=TRUE)
+h5 <- grep("h5$", fs, value=TRUE)
+sce <- read10xCounts(h5, col.names=TRUE)
+
+# add cell metadata
+csv <- grep("csv$", fs, value=TRUE)
+cd <- read.csv(csv, row.names=1)
+colData(sce)[names(cd)] <- cd[colnames(sce), ]
+
+# use gene symbols as feature names
+rownames(sce) <- make.unique(rowData(sce)$Symbol)
+
+# exclude cells deemed to be of low-quality
+sce <- sce[, sce$QCFilter == "Keep"]
+
+```
+
+
+We are wanting to use this single cell data as a reference. It has two resolutions of cell annotations. Lets check out what cells labels are in `Level1`.
+
+```{r ann-level1-table}
+# tabulate subpopulations
+table(sce$Level1)
+```
+
+Spaces can make manipulating data tricky sometimes so lets replace them with underscores.
+
+```{r ann-sanitize-level1}
+sce$Level1 <- gsub(" ", "_", sce$Level1)
+```
+
+
+For speed we down-sample to at most 1,000 cells per reference class. This preserves diversity within each class while keeping memory and runtime manageable.
+
+
+```{r ann-downsample-sce, message=FALSE, warning=FALSE}
+# (this is done only to keep runtime/memory low)
+cells_by_type <- split(seq_len(ncol(sce)), sce$Level1)
+down_sample <- unlist(lapply(cells_by_type, \(.) sample(., min(length(.), 1000))))
+```
+
+
+### RCTD - Robust decomposition of cell type mixtures in spatial transcriptomics
+
+There are many ways to transfer labels from single-cell data to spatial data. We use RCTD because it performs competitively in public benchmarks, models mixed signals explicitly, and assigns each spatial unit a clear class as a singlet or as one of several doublet types. RCTD was originally designed for spot-based platforms such as 10x Visium, where each spot captures RNA from multiple cells. It treats the observed counts in a spot as a mixture of reference cell-type expression profiles and uses a likelihood model to estimate non-negative weights for each candidate cell type. It then compares a singlet model against a doublet model to determine whether one cell type is sufficient to explain the counts or whether two are required. The method also learns scale factors to account for platform differences and total RNA content, which helps it transfer labels across technologies.
+
+In our setting we apply RCTD at cellular resolution using segmented Visium HD data. Although each unit is intended to represent a single cell, there are still cases where the measured counts reflect more than one cell type. This can arise from partial volume effects at cell boundaries, segmentation errors, tightly packed regions, or local diffusion of transcripts. Running RCTD in doublet mode remains useful here because it can flag these cases and provide a principled estimate of the most likely composition. In practice we expect most units to be classified as singlets, with a minority of doublets that warrant closer inspection or additional filtering.
+
+Unfortunately running RCTD is slow, so we will load a precompiled version.
+
+```{r rctd-preload-level1}
+# data("rctd_result_level1.RData", package = "EuroBioC2025_OSTA_Workshop")
+load(here::here("data/rctd_result_level1.RData"))
+```
+
+
+!!! Do not run this in the workshop it will take 30 mins.
+
+```{r rctd-reproduce-run, warning=FALSE, message=FALSE, eval=FALSE}
+
+# ## Perform initial preprocessing of the visiumHD and single cell reference data
+# rctd_data <- createRctd(spatial_experiment = vhdsub,              # Our visium HD data
+#                         reference_experiment = sce[, down_sample],# Down-sampled single cell reference
+#                         cell_type_col="Level1",                   # We will use the Level1 resolution of cell types.
+#                         UMI_min = 0)                              # To make things easier, we won't filter away cells that RCTD thinks are poor quality.
+# 
+# ## Perform the deconvolution.
+# rctd_result_level1 <- runRctd(rctd_data, max_cores = 4, rctd_mode = "doublet")
+
+```
+
+Note: RCTD does have some internal QC, so lets check nothing was filtered out prior to running deconvolution. 
+
+```{r rctd-qc-dims}
+dim(vhdsub)
+dim(rctd_result_level1)
+```
+
+The spot labels are saved in the colData as `spot_class`. This provides a quick quality check: a majority of singlet classifications at cell resolution is expected and supports the validity of the H&E-guided segmentation. 
+
+
+```{r rctd-spot-class-tab, warning=FALSE, message=FALSE}
+table(rctd_result_level1$spot_class)
+```
+
+
+We then synchronise the deconvolution labels back into our `vhdsub` SpatialExperiment object by matching cell_ids to keep everything aligned.
+
+
+```{r rctd-assign-celltype}
+# Here we use match to ensure that we match the cell IDs
+vhdsub$cellTypeClass <- rctd_result_level1$spot_class[match(colnames(vhdsub), colnames(rctd_result_level1))]
+vhdsub$cellType <- rctd_result_level1$first_type[match(colnames(vhdsub), colnames(rctd_result_level1))]
+
+# Double check that the numbers of the cell types is consistent
+table(vhdsub$cellType)
+```
+```{r rctd-result-discrete, fig.width=8, fig.height=3, message=FALSE}
+p0 <- plotSpatialFeature(vhdsub, features = "cellTypeClass", palette = unname(pals::okabe()),
+                   colGeometryName = "updatecellSeg")
+p1 <- plotSpatialFeature(vhdsub, features = "cellType", palette = unname(pals::trubetskoy()),
+                   colGeometryName = "updatecellSeg")
+
+(p0 | p1) & thin_discrete_legend
+```
+
+```{r rctd-agree-spotsweeper}
+table(vhdsub$subsets_mt_percent_outliers == TRUE)
+# FALSE  TRUE 
+#  4241     1 
+vhdsub$cellType[vhdsub$subsets_mt_percent_outliers == TRUE]
+# [1] NA
+vhdsub$cellTypeClass[vhdsub$subsets_mt_percent_outliers == TRUE]
+# reject
+```
+
 
 Filter out low quality cells from the `sf` and `SpatialExperiment` object.
 
 ```{r qc-filtering, message=FALSE, warning=FALSE}
-subset_data_test <- subset_data[!vhd$discard, ]
-vhd <- vhd[, !vhd$discard]
-
-ncol(vhd); nrow(subset_data_test)
+vhdsub <- vhdsub[, !vhdsub$discard]
+dim(vhdsub)
 ```
 
-## Clustering
+
+## Domain Identification
 
 First, we identify highly variable genes (HVGs) in the target area: [Note that spatially variable genes (SVGs) could be used instead]{.aside}
 
-```{r vhd-hvg}
-vhd <- logNormCounts(vhd)
-dec <- modelGeneVar(vhd)
+```{r vhdsub-hvg}
+vhdsub <- logNormCounts(vhdsub)
+dec <- modelGeneVar(vhdsub)
 hvg <- getTopHVGs(dec, n=3e3)
 ```
 
@@ -427,234 +464,388 @@ hvg <- getTopHVGs(dec, n=3e3)
 `r BiocStyle::Biocpkg("Banksy")` utilizes a pair of spatial kernels to capture gene expression variation, followed by dimension reduction and graph-based clustering to identify spatial domains.
 
 ```{r Banksy, message=FALSE}
-# set seed for random number generation
-# in order to make results reproducible
-set.seed(112358)
-# 'Banksy' parameter settings
-k <- 8   # consider first order neighbors
-l <- 0.2 # use little spatial information
-a <- "logcounts"
-xy <- c("array_row", "array_col")
 # restrict to selected features
-tmp <- vhd[hvg, ]
+tmp <- vhdsub[hvg, ]
+
 # compute spatially aware 'Banksy' PCs
-tmp <- computeBanksy(tmp, assay_name=a, coord_names=xy, k_geom=k)
-tmp <- runBanksyPCA(tmp, lambda=l, npcs=20)
-reducedDim(vhd, "PCA") <- reducedDim(tmp)
-## run UMAP (for visualization purposes only)
-set.seed(112358)
-vhd <- runUMAP(vhd, dimred="PCA")
-# build cellular shared nearest-neighbor (SNN) graph
-g <- buildSNNGraph(vhd, use.dimred="PCA", type="jaccard", k=20)
-# cluster using Leiden community detection algorithm
-k <- cluster_leiden(g, objective_function="modularity", resolution=1.2)
-table(vhd$Banksy <- factor(k$membership))
+set.seed(1000)
+tmp <- computeBanksy(tmp, 
+                     assay_name = "logcounts", 
+                     coord_names = c("array_row", "array_col"),  
+                     k_geom = 8)   # consider first order neighbors
+tmp <- runBanksyPCA(tmp, 
+                    lambda = 0.2, # use little spatial information, 
+                    npcs = 20)
+reducedDim(vhdsub, "PCA") <- reducedDim(tmp)
+
+set.seed(1000)
+tmp <- Banksy::clusterBanksy(tmp, lambda = 0.2, npcs = 20, resolution = 0.8)
+vhdsub$Banksy <- tmp$clust_M0_lam0.2_k50_res0.8
+
+table(vhdsub$Banksy)
+```
+
+Now we can visualize clustering result spatially.
+
+```{r clus-spa-umap, fig.width=5, fig.height=3.5, warning=FALSE, message=FALSE}
+plotSpatialFeature(vhdsub, features = "Banksy", 
+                   colGeometryName = "updatecellSeg") +
+  scale_fill_manual(values = unname(pals::kelly()))
 ```
 
 Next, we can perform differential gene expresison (DGE) analysis to identify markers for each cluster; c.f. @sec-crs-signatures. We also compute the cluster-wise mean expression of selected markers:
 
 ```{r mgs}
 # differential gene expression analysis
-mgs <- findMarkers(vhd, groups=vhd$Banksy, direction="up")
+mgs <- findMarkers(vhdsub, groups = vhdsub$Banksy, direction = "up")
 # select for a few markers per cluster
 top <- lapply(mgs, \(df) rownames(df)[df$Top <= 2])
 top <- unique(unlist(top))
 # average expression by clusters
-pbs <- aggregateAcrossCells(vhd, 
-    ids=vhd$Banksy, subset.row=top, 
-    use.assay.type="logcounts", statistics="mean")
+pbs <- aggregateAcrossCells(vhdsub, 
+    ids = vhdsub$Banksy, subset.row = top, 
+    use.assay.type = "logcounts", statistics = "mean")
 ```
 
 The marker genes in each cluster can be visualized with a heatmap:
 
-```{r plt-mgs-hm, message=FALSE, fig.width=8.5, fig.height=3.4}
-#| code-fold: true
+```{r plt-mgs-hm, message=FALSE, fig.width=5, fig.height=2.5}
 # visualize averages z-scaled across clusters
-pheatmap(
-    mat=t(assay(pbs)), scale="column", breaks=seq(-2, 2, length=101), 
-    cellwidth=10, cellheight=10, treeheight_row=5, treeheight_col=5)
+exec(pheatmap,
+    mat = t(assay(pbs)), scale = "column", breaks = seq(-2, 2, length = 101),
+    !!!common_args_heatmap)
 ```
 
-Note that the visualization tools `library(ggspavis)` we previously developed for spot and cellular-level spatial transcriptomics technologies, e.g. Visium and Xenium, can also be used here, because we have calculated the cell centroid from the cell segmentation polygons. We can visualize the cell-level expression of selected markers in space:
+We can visualize some maker genes:
 
 ```{r plt-mgs-xy, fig.width=10, fig.height=3, message=FALSE}
-#| code-fold: true
-gs <- c("MMP2", "PIGR", "IGHG1")
-ps <- lapply(gs, \(.) 
-             plotCoords(vhd, annotate=., point_size = 0.6, in_tissue = NULL,
-                        assay_name="logcounts", y_reverse = FALSE))
-wrap_plots(ps, nrow=1) & theme(
-    legend.key.width=unit(0.5, "lines"),
-    legend.key.height=unit(1, "lines")) &
-    scale_color_gradientn(colors=rev(hcl.colors(9, "Rocket")))
+p0 <- plotSpatialFeature(vhdsub, features = "MMP2", 
+                   colGeometryName = "updatecellSeg") + ggtitle("MMP2") 
+
+p1 <- plotSpatialFeature(vhdsub, features = "PIGR", 
+                         colGeometryName = "updatecellSeg") + ggtitle("PIGR") 
+
+p2 <- plotSpatialFeature(vhdsub, features = "DES", 
+                         colGeometryName = "updatecellSeg") + ggtitle("DES") 
+
+(p0 | p1 | p2) &
+  gradient_theme & 
+  scale_fill_gradientn(colors = rev(hcl.colors(9, "Rocket")))
+
 ```
 
-```{r clus-merge-sf-umap-merge-clus, warning=FALSE, message=FALSE}
-CD <- colData(vhd) %>% as.data.frame()
-subset_data <- subset_data %>%
-    left_join(CD %>% select(cell_id, Banksy))
-
-umap <- reducedDim(vhd, "UMAP") %>% as.data.frame() %>%
-    rownames_to_column("cell_id") %>%
-    left_join(CD %>% select(cell_id, Banksy))
-```
-
-Now we can visualize clustering result spatially and on UMAP.
-
-```{r clus-spa-umap, fig.width=7.3, fig.height=3.5, warning=FALSE, message=FALSE}
-#| code-fold: true
-# helper
-plotCoordUmap <- function(subset_data, umap, annotate = "Cluster", 
-                          legend.col = 2, pal = unname(pals::kelly())){
-    pp <- plotPolygons(subset_data, annotate = annotate) + 
-      scale_fill_manual(values = pal) + 
-      theme(legend.position = "none",
-            plot.title = element_text(hjust = 0.5)) + 
-      ggtitle(annotate)
-    
-    pu <- ggplot(umap, aes(x = UMAP1, y = UMAP2)) +
-      geom_point(aes(color = get(annotate)), size = 0.5) +
-      scale_color_manual(values = pal) +
-      labs(color = annotate) + 
-      guides(col=guide_legend(override.aes=list(size=3), ncol = legend.col)) +
-      theme_classic()
-      
-    return(pp | pu)
-}
-
-plotCoordUmap(subset_data, umap, annotate = "Banksy", legend.col = 2,
-              pal = unname(pals::kelly()))
-```
-
-## Deconvolution
-
-### Reference
-
-As previously shown, we can label transfer from single-cell reference to spatial data using cell type deconvolution, assuming each data point contains around one cell type. First, we obtain the single-cell data as reference for deconvolution:
-
-```{r load-sce, message=FALSE, warning=FALSE}
-## SCE ref
-id <- "Chromium_HumanColon_Oliveira"
-pa <- OSTA.data_load(id)
-dir.create(td <- tempfile())
-unzip(pa, exdir=td)
-
-# read into 'SingleCellExperiment'
-fs <- list.files(td, full.names=TRUE)
-h5 <- grep("h5$", fs, value=TRUE)
-sce <- read10xCounts(h5, col.names=TRUE)
-# add cell metadata
-csv <- grep("csv$", fs, value=TRUE)
-cd <- read.csv(csv, row.names=1)
-colData(sce)[names(cd)] <- cd[colnames(sce), ]
-# use gene symbols as feature names
-rownames(sce) <- make.unique(rowData(sce)$Symbol)
-# exclude cells deemed to be of low-quality
-sce <- sce[, sce$QCFilter == "Keep"]
-# tabulate subpopulations
-table(sce$Level1)
-```
-
-Down-sample to at most 4,000 cells per cluster for the single-cell reference.
-
-```{r subset-sce, message=FALSE, warning=FALSE}
-# (this is done only to keep runtime/memory low)
-cs <- split(seq_len(ncol(sce)), sce$Level1)
-cs <- lapply(cs, \(.) sample(., min(length(.), 4e3)))
-ncol(.sce <- sce[, unlist(cs)])
-```
-
-### RCTD
-
-We perform deconvolution with `doublet` mode for cell-level data, assuming at most 2 cell types per data point.
-
-```{r rctd-run, warning=FALSE, message=FALSE}
-rctd_data <- createRctd(vhd, .sce, cell_type_col="Level1")
-(res <- runRctd(rctd_data, max_cores=4, rctd_mode="doublet"))
-```
-
-Check deconvolution class of cells. Note that some cells did not pass RCTD internal QC, so they have been filtered out prior to running deconvolution. You can check the number of genes and cells used to deconvolution with `dim(rctd_data$spatial_experiment)`.
-
-```{r rctd-class, warning=FALSE, message=FALSE}
-table(res$spot_class)
-```
-
-Majority of the cells are `singlet`, which confirms the build-in H&E guided segmentation in SpaceRanger. Then, we prepare deconvolution results for visualization.
-
-```{r rctd-decon-result, warning=FALSE, message=FALSE}
-ws <- assay(res, "weights")
-ws <- data.frame(t(as.matrix(ws)))
-res$cell_id <- colnames(res)
-rctddf <- cbind(ws, colData(res) |> 
-              as.data.frame() |> 
-              select(cell_id, spot_class, first_type))
-```
-
-Merge cell-level deconvolution result into `sf` object that contains cell segmentation coordinates within the subset region.
-
-```{r rctd-merge-sf, warning=FALSE, message=FALSE}
-subset_data_plt <- subset_data %>% 
-    right_join(rctddf)
-colnames(subset_data_plt)
-dim(subset_data_plt)
-```
-
-Deconvolution result per cell type.
-
-```{r rctd-plt-decon-ct, fig.width=9.5, fig.height=8, warning=FALSE, message=FALSE}
-#| code-fold: true
-lapply(names(ws), \(.) 
-       plotPolygons(subset_data_plt, annotate=.) + ggtitle(.)) |>
-    wrap_plots(nrow=3, guides="collect") & theme(
-      plot.title = element_text(hjust = 0.5),
-      legend.title=element_blank(),
-      legend.key.width=unit(0.5, "lines"),
-      legend.key.height=unit(1, "lines")) &
-    scale_fill_gradientn(colors=rev(hcl.colors(9, "Rocket")))
-```
-
-Next, we merge in deconvolution labels to the reduced dimension data frame. Only cells that passed RCTD quality control are kept.
-
-```{r umap-merge-decon, warning=FALSE, message=FALSE}
-umap <- umap %>% right_join(rctddf)
-```
-
-Visualize spatially and in reduced dimension by cell class and first cell type. For demonstration purpose only, we annotate each cell by their `first_type` from the deconvolution, the most likely cell type, regardless of their `spot_class` being `singlet`, `doublet_certain`, or `doublet_uncertain`.
-
-```{r plt-coord-umap-decon, fig.width=8, fig.height=7, warning=FALSE, message=FALSE}
-#| code-fold: true
-plotCoordUmap(subset_data_plt, umap, annotate = "spot_class", legend.col = 1,
-              pal = unname(pals::okabe())) / 
-    plotCoordUmap(subset_data_plt, umap, annotate = "first_type", legend.col = 1,
-                  pal = unname(pals::trubetskoy()))
-```
 
 ## Downstream
 
 ### Concordance of clustering & deconvolution
 
-Map over deconvolution result.
-
-```{r rctd-map-vhd}
-vhd$first_type <- rctddf$first_type[match(colnames(vhd), rctddf$cell_id)]
-```
-
 We can visualize the results spatially:
 
-```{r plt-dec-clu-xy, fig.width=10, fig.height=4}
-#| code-fold: true
-plotCoords(vhd, annotate="Banksy", point_size=1.6, y_reverse = FALSE,
-           in_tissue = NULL, pal=unname(pals::kelly())) + plot_spacer() +
-plotCoords(vhd, annotate="first_type", point_size=1.6, y_reverse = FALSE,
-           in_tissue = NULL, pal=unname(pals::trubetskoy())) + 
-    plot_layout(nrow=1, widths=c(1, 0.05, 1)) & 
-    theme(legend.key.size=unit(0, "lines"))
+```{r plt-dec-clu-xy, fig.width=10, fig.height=4, message=FALSE}
+
+# plotCoords(vhdsub, annotate="Banksy", point_size=1.6, y_reverse = FALSE,
+#            in_tissue = NULL, pal=unname(pals::kelly())) + plot_spacer() +
+# plotCoords(vhdsub, annotate="cellType", point_size=1.6, y_reverse = FALSE,
+#            in_tissue = NULL, pal=unname(pals::trubetskoy())) + 
+#     plot_layout(nrow=1, widths=c(1, 0.05, 1)) & 
+#     theme(legend.key.size=unit(0, "lines"))
+
+p0 <- plotSpatialFeature(vhdsub, features = "Banksy", 
+                   colGeometryName = "updatecellSeg") + 
+  scale_fill_manual(values = unname(pals::kelly())) + 
+  ggtitle("Banksy")
+
+p1 <- plotSpatialFeature(vhdsub, features = "cellType", 
+                         colGeometryName = "updatecellSeg") + 
+  scale_fill_manual(values = unname(pals::trubetskoy())) + 
+  ggtitle("cellType") 
+
+p0 + p1 +
+  plot_layout(nrow=1) &
+  center_title & thin_discrete_legend
+
 ```
 
 We observe that Banksy delineates tissue borders very well, while deconvolution provides direct biological insight into the underlying clusters. Their concordance can be visualized using a heatmap:
 
-```{r plt-dec-clu-hm, fig.width=2.5, fig.height=3.5}
+```{r plt-dec-clu-hm, fig.width=2.5, fig.height=3}
 #| code-fold: true
-fq <- prop.table(table(vhd$Banksy, vhd$first_type), 1)
-pheatmap(fq, cellwidth=10, cellheight=10, treeheight_row=5, treeheight_col=5)
+fq <- prop.table(table(vhdsub$Banksy, vhdsub$cellType), 1)
+exec(pheatmap, fq, !!!common_args_heatmap)
 ```
+
+
+## Interrogating the spatial arrangement of our cells.
+
+### Localisation
+
+We next quantify spatial proximity between annotated cell types. The `getPairwise()` function from the `spicyR` package computes the K-cross function across all pairs of classes, summarising whether cell type A tends to appear within distance r of cell type B more often than expected under spatial randomness. Here we use a radius of 25 units to capture immediate neighbourhood effects at approximately one to two cell diameters.
+
+
+```{r spicy-pairwise-kcross}
+crossK = getPairwise(vhdsub, 
+                     r = 25, 
+                     cellType = "cellType",
+                     imageID = "sample_id",
+                     spatialCoords = c("X", "Y"))
+```
+
+
+We can visualise these relationships using `imageCrossPlot()`. It visualises enrichment and avoidance across all pairs, which is handy for scanning for strong interactions before diving deeper. To aid interpretation, follow the sign: values above zero indicate spatial attraction at radius r (more co-occurrence than expected), while values below zero indicate spatial repulsion.
+
+
+```{r spicy-pairwise-plot, fig.height=4, fig.width=6}
+imageCrossPlot(crossK)
+```
+
+We can visualise the spatial arrangement of our annotated cells to build intuition for these statistics. This helps confirm that any strong pairwise signals are visible in the image and not driven by a handful of cells.
+
+```{r ann-spatial-scatter}
+vhdsub |> 
+  ggplot(aes(X, Y, colour = cellType)) + geom_point() + scale_color_brewer(palette = "Set1") + theme_classic()
+```
+
+
+
+### Localisation in context
+
+While pairwise proximity statistics are a sensible first step, they can sometimes be misleading because they ignore the broader tissue context. For example, the K-cross function from spicyR will tell us whether two cell types are found close together more often than expected under a random distribution, but it does not ask conditional questions. Biologists, however, often want to know things like:
+
+*“Do immune cells cluster more tightly with tumour than we would expect, even after accounting for the fact that immune cells already tend to occur together?”*
+
+This is where `Kontextual` from the `Statial` package comes in. Kontextual extends beyond pairwise enrichment by creating a contextual null model. Instead of comparing two cell types against a fully random distribution, it compares them against what we would expect given the observed mixture of other neighbouring cell types. In practice, this means that Kontextual is testing whether a particular association is stronger (or weaker) than would be expected given the local cellular environment.
+
+For this demonstration, we define an immune context composed of T cells, Myeloid cells, and B cells. Kontextual then evaluates whether, within this immune backdrop, specific pairs (for example, Myeloid–Tumour) show evidence of additional attraction or repulsion at a chosen spatial scale. The method is flexible: you can define any grouping of interest as a “parent” or context, and then interrogate the conditional relationships of one population relative to that context.
+
+
+
+```{r ktx-run}
+
+## Create a vector saying which cells are in the immune context
+immune <- c("T_cells", "Myeloid", "B_cells")
+
+## Define the parents we want to use as contexts
+parentDf <- parentCombinations(
+  all = unique(vhdsub$cellType),
+  immune = immune)
+
+## Run Kontextual with radius of 20
+resultsKontextual <- Kontextual(
+  cells = vhdsub,
+  parentDf = parentDf,
+  imageID = "sample_id",
+  cellType = "cellType",
+  spatialCoords = c("X", "Y"),
+  r = 20
+)
+```
+
+
+Lets visualise the results. 
+
+```{r ktx-scatter-plot}
+plotKontext <- resultsKontextual |>
+  ggplot(aes(original, kontextual, label = test)) +
+  geom_point() +
+  geom_hline(yintercept = 0) + 
+  geom_vline(xintercept = 0) +
+  theme_classic()
+
+ggplotly(plotKontext)
+```
+
+
+We can then inspect radii-dependent curves (for example Myeloid around Tumour) to confirm at which scales the effect appears, which is often informative for processes like invasion fronts or peritumoural niches.
+
+
+```{r ktx-scale-curve}
+
+curves <- kontextCurve(
+  cells = vhdsub,
+  from = "Tumor",
+  to = "Myeloid",
+  parent = immune,
+  rs = seq(5, 105, 20),
+  image = "sample01",
+  cellType = "cellType",
+  imageID = "sample_id"
+)
+
+kontextPlot(curves)
+```
+
+To aid interpretation, we can also re-plot the spatial map with the immune context greyed and the two focal types coloured. This quickly links our statistical findings to a tangible patterns in the tissue.
+
+```{r ktx-spatial-highlight}
+
+df <- colData(vhdsub) |>
+  as.data.frame() |>
+  cbind(spatialCoords(vhdsub))
+
+ggplot(data = filter(df, cellType %in% c("Tumor", "Myeloid")), 
+       mapping = aes(X, Y, color = cellType)) + 
+  geom_point(data = dplyr::filter(df, cellType %in% immune), 
+             colour = "darkgrey") +
+  geom_point()
+  
+```
+
+
+
+
+## Identifying expression changes associated with cell localisation
+
+Spatial proximity tells us where different cell types are relative to one another, but an equally important question is what happens to those cells when they are in close contact. Proximity alone does not guarantee functional interaction. To uncover biological relevance, we need to test whether changes in the microenvironment are associated with measurable shifts in gene expression within a given cell type.
+
+This is the motivation behind `spatioMark`, part of the Statial package. The idea is simple but powerful:
+
+- take a target population (for example, Myeloid cells),
+
+- quantify its local environment (how many Tumour cells, T cells, fibroblasts, etc. are nearby within a certain radius),
+
+- and ask whether the transcriptomes of the target cells vary systematically with that environment.
+
+In practice, spatioMark first computes local abundances of each cell type around every cell, giving each cell a numerical “neighbourhood profile.” These covariates then feed into a gene-wise regression model. For each gene expressed in the target population, spatioMark fits a generalised linear model with a negative binomial mean–variance relationship to account for count data. The coefficients tell us whether gene expression increases or decreases as the abundance of a chosen neighbour rises.
+
+First, we need to quantify the abundance of each cell type around each cell.
+
+```{r smark-abundances}
+
+vhdsub <- getAbundances(vhdsub,
+  r = 25,
+  cellType = "cellType",
+  imageID = "sample_id"
+)
+```
+
+
+Next, we focus on whether Myeloid cells show distinct expression patterns when they are located close to Tumour cells.
+
+
+```{r smark-statechanges-fit}
+stateChanges <- calcStateChanges(
+  cells = vhdsub,
+  type = "abundances",
+  from = "Myeloid",
+  to = "Tumor",
+  test = "nb",
+  imageID = "sample_id"
+)
+
+
+stateChanges |> head(20)
+```
+The output is a ranked list of genes, highlighting markers that change as Myeloid cells are near tumour cells. SPP1 is known to be expressed in tumour-associated macrophages.
+
+```{r smark-plot-spp1}
+p <- plotStateChanges(
+  cells = vhdsub,
+  image = "sample01",
+  type = "abundances",
+  from = "Myeloid",
+  to = "Tumor",
+  marker = "SPP1",
+  imageID = "sample_id",
+  size = 1,
+  shape = 19,
+  interactive = FALSE,
+  method = "lm"
+)
+
+p[[1]]
+```
+
+
+However, there are some genes that not expressed in macrophages such as CEACAM6 which are likely lateral spillover or diffusion.
+
+
+```{r smark-ceacam6-check}
+sce[,down_sample] |>
+  join_features(features = "CEACAM6", shape = "wide") |>
+  ggplot(aes(x = Level1, y = CEACAM6)) + 
+    stat_summary(fun = mean, geom = "bar")
+```
+
+
+
+Because we already computed RCTD weights, we can mitigate contamination by adding deconvolution-derived components as covariates to our models. By projecting the RCTD cell-type weight matrix into `reducedDim(vhdsub, "RCTD")`, we can pass "RCTD" to the contamination argument of `calcStateChanges()`. This can remove false positives like CEACAM6 while preserving genuine relationships.
+
+
+```{r smark-add-contam-rctd}
+contam <- assay(rctd_result_level1,1) |>
+  t() |>
+  as.matrix() |>
+  as.data.frame()
+
+
+reducedDim(vhdsub, "RCTD") <- contam[match(colnames(vhdsub), rownames(contam)),]
+
+```
+
+
+
+```{r smark-statechanges-contam}
+stateChangesCon <- calcStateChanges(
+  cells = vhdsub,
+  type = "abundances",
+  from = "Myeloid",
+  to = "Tumor",
+  test = "nb",
+  imageID = "sample_id",
+  contamination = "RCTD"
+)
+
+
+stateChangesCon |> filter(marker == "CEACAM6")
+```
+
+
+## Extension
+
+You can try using a finer resolution of cell type classified by RCTD.
+
+```{r level2_annotation, eval=FALSE}
+data("rctd_result_level2.RData", package = "EuroBioC2025_OSTA_Workshop")
+```
+
+
+Or you can try using a different deconvulation algorithm.
+
+```{r CARD, eval=FALSE}
+library(CARDspa)
+set.seed(2025)
+vhd2 <- vhdsub
+colnames(spatialCoords(vhd2)) <- c("x", "y")
+sce2 <-sce[, down_sample]
+counts(vhd2) <- as(counts(vhd2), "sparseMatrix")
+counts(sce2) <- as(counts(sce2), "sparseMatrix")
+CARD_obj <- CARD_deconvolution(
+    spe = vhd2,
+    sce = sce2,
+    sc_count = NULL,
+    sc_meta = NULL,
+    spatial_count = NULL,
+    spatial_location = NULL,
+    ct_varname = "Level2",
+    ct_select = NULL,       # decon with all sce$Annogrp cell types
+    sample_varname = NULL,  # use all sce as one ref sample 
+    mincountgene = 0,
+    mincountspot = 0
+)
+
+# a matrix/data.frame of probabilities per cell (rows) × cell types (cols)
+P <- CARD_obj$Proportion_CARD[vhdsub$cell_id, ]
+
+# cell type with the largest probability in each row
+vhdsub$cellType2 <- colnames(P)[max.col(P, ties.method = "first")]
+
+reducedDim(vhdsub, "CARD") <- as.data.frame(P)
+```
+
+
+
+
+
+
+
+

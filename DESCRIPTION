@@ -2,11 +2,15 @@ Package: EuroBioC2025_OSTA_Workshop
 Title: EuroBioC2025 OSTA workshop on Visium HD cell-level analysis workflow
 Version: 2.0.1
 Authors@R: 
-    person(given = "Yixing E.",
+    c(person(given = "Yixing E.",
            family = "Dong",
            role = c("aut", "cre"),
            email = "estelladong729@gmail.com",
-           comment = c(ORCID = "0009-0003-5115-5686"))
+           comment = c(ORCID = "0009-0003-5115-5686")),
+      person(given = "Ellis", 
+            family = "Patrick", 
+            role = c("aut"), 
+            email = "ellis.patrick@sydney.edu.au")
 Description: This package serves as a template for using github actions to 
     prepare a Bioconductor Workshop package for use. In particular,
     a pkgdown website and docker image are generated based on workflow 
@@ -17,30 +21,44 @@ LazyData: true
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.1.0
 Depends: 
-    Biobase
+    Biobase,
+    Banksy,
+    CARDspa,
+    dplyr,
+    DropletUtils,
+    ggplot2,
+    grDevices,
+    grid,
+    here
+    igraph,
+    magick,
+    OSTA.data,
+    patchwork,
+    pheatmap,
+    plotly,
+    rlang,
+    S4Vectors,
+    scater,
+    scran,
+    scuttle,
+    sf,
+    SingleCellExperiment,
+    spacexr,
+    SpatialExperiment,
+    SpatialFeatureExperiment,
+    spicyR,
+    SpotSweeper,
+    Statial,
+    tidyr,
+    tidySpatialExperiment,
+    tidyverse,
+    Voyager,
 Suggests: 
     knitr,
     rmarkdown,
-    pkgdown,
-    Banksy, 
-    DropletUtils, 
-    ggspavis, 
-    OSTA.data, 
-    scater,
-    scran,
-    scuttle, 
-    sf, 
-    spacexr, 
-    SpatialExperiment,
-    dplyr, 
-    igraph, 
-    ggplot2, 
-    magick, 
-    patchwork, 
-    pheatmap, 
-    tidyr, 
-    tidyverse
+    pkgdown
 URL: https://estellad.github.io/EuroBioC2025_OSTA_Workshop/
 BugReports: https://github.com/estellad/EuroBioC2025_OSTA_Workshop/issues/new/choose
 VignetteBuilder: knitr
 DockerImage: ghcr.io/estellad/eurobioc2025ostaworkshop:latest
+Remotes: SydneyBioX/Statial, ellispatrick/spicyR
