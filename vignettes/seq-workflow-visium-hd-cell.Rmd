@@ -1,6 +1,5 @@
 ---
 title: "EuroBioC2025 OSTA Workshop"
-author: Estella Yixing Dong^[estelladong729@gmail.com]
 output: rmarkdown::html_vignette
 vignette: >
   %\VignetteIndexEntry{EuroBioC2025 OSTA Workshop}
@@ -19,7 +18,7 @@ knitr::opts_chunk$set(
 
 # Workflow: Visium HD cell-level
 
-Authors: Yixing E. Dong[^1], Ellis Patrick[^2]. <br/> Last modified: 23 July, 2025.
+Authors: Yixing E. Dong[^1], Ellis Patrick[^2]. <br/> Last modified: 15 September, 2025.
 
 [^1]: University of Lausanne, Lausanne, Switzerland
 
@@ -60,7 +59,7 @@ id <- "VisiumHD_HumanColon_Oliveira"
 pa <- OSTA.data_load(id)
 dir.create(td <- tempfile())
 unzip(pa, exdir=td)
-list.files(td, "segmented_outpus")
+list.files(file.path(td, "segmented_outputs"))
 ```
 
 We also prepared a reader Visium HD segmented output at `./vignettes/utils.R`.
@@ -148,7 +147,7 @@ library(Voyager)
 Output files from SpaceRanger v4 are listed in `/segmented_outputs` folder, with the expected structure detailed in @sec-bkg-importing. We start with read in cell segmentation as a `sf` object, scaling factor `.json` file, and image file. We will use high resolution image, as it gives expected H&E details under segmented cell masks.
 
 ```{r prep}
-source(here::here("vignettes/utils.R"))
+source("utils.R")
 
 # ggplot theme alias
 center_title <- theme(plot.title = element_text(hjust = 0.5))
@@ -490,7 +489,7 @@ table(vhdsub$Banksy)
 
 Now we can visualize clustering result spatially.
 
-```{r clus-spa-umap, fig.width=5, fig.height=3.5, warning=FALSE, message=FALSE}
+```{r clus-spa-umap, fig.width=4, fig.height=3, warning=FALSE, message=FALSE}
 plotSpatialFeature(vhdsub, features = "Banksy", 
                    colGeometryName = "updatecellSeg") +
   scale_fill_manual(values = unname(pals::kelly())) + 
@@ -522,7 +521,7 @@ exec(pheatmap,
 
 We can visualize some maker genes:
 
-```{r plt-mgs-xy, fig.width=10, fig.height=3, message=FALSE}
+```{r plt-mgs-xy, fig.width=8, fig.height=2.5, message=FALSE}
 p0 <- plotSpatialFeature(vhdsub, features = "MMP2", 
                    colGeometryName = "updatecellSeg") + ggtitle("MMP2") 
 
@@ -545,7 +544,7 @@ p2 <- plotSpatialFeature(vhdsub, features = "DES",
 
 We can visualize the results spatially:
 
-```{r plt-dec-clu-xy, fig.width=10, fig.height=4, message=FALSE}
+```{r plt-dec-clu-xy, fig.width=8, fig.height=3, message=FALSE}
 
 p0 <- plotSpatialFeature(vhdsub, features = "cellType", 
                          colGeometryName = "updatecellSeg") + 
@@ -580,7 +579,6 @@ We next quantify spatial proximity between annotated cell types. The `getPairwis
 
 
 ```{r spicy-pairwise-kcross}
-load(here::here("data/vhdsub.RData"))
 crossK = getPairwise(vhdsub, 
                      r = 25, 
                      cellType = "cellType",
