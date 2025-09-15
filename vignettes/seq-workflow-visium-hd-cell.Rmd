@@ -47,13 +47,13 @@ Additional reading:
 
 Participants can watch the live demo, or may prefer to follow the demonstration by bringing their laptops along. To follow the analysis on their own laptops, participants need to install the `EuroBioC2025_OSTA_Workshop` workflow by running
 
-```{r}
-# TODO
-```
+<!-- # ```{r} -->
+<!-- # # TODO -->
+<!-- # ``` -->
 
 The relevant data are stored on Open Science Framework, and can be downloaded as delayed format cached on your laptop through `OSTA.data`:
 
-```{r}
+```{r load-data-test, message=FALSE}
 library(OSTA.data)
 id <- "VisiumHD_HumanColon_Oliveira"
 pa <- OSTA.data_load(id)
@@ -168,7 +168,6 @@ enlarge_legend_dot <- guides(col=guide_legend(override.aes=list(size=3)))
 ```
 
 ```{r osta_download}
-library(OSTA.data)
 id <- "VisiumHD_HumanColon_Oliveira"
 pa <- OSTA.data_load(id)
 dir.create(td <- tempfile())
@@ -188,8 +187,8 @@ To keep runtimes low, our downstream analysis will be performed on a subset area
 
 ```{r subset-polygons, message=FALSE, warning=FALSE}
 vhdsub <- subsetVisiumHD(vhdsfe,
-                         xmin = 4217.001, xmax = 4462.094,
-                         ymin = 2996.551, ymax = 3225.485)
+                         xmin = 4214.937, xmax = 4465.761,
+                         ymin = 2979.286, ymax = 3211.817)
 ```
 
 Here, as we have restricted the analysis to only 1/64 of the entire tissue coverage, the number of cells in the subset `sf` object should also be reduced by roughly this fraction, depending on tissue density.
@@ -237,7 +236,7 @@ p1 <- plotSpatialFeature(vhdsub, bbox = unlist(getBoxRange(vhdsub)),
   center_title
 ```
 
-## Quality control
+## Which cells passed quality check?
 
 Get cell-level QC metrics for visualization.
 
@@ -307,7 +306,7 @@ p0 + p1 + p2 +
 
 ```
 
-## Annotating our cells
+## What type of cells do we have in this region?
 
 ### Load reference
 
@@ -399,6 +398,13 @@ Note: RCTD does have some internal QC, so lets check nothing was filtered out pr
 ```{r rctd-qc-dims}
 dim(vhdsub)
 dim(rctd_result_level1)
+setdiff(colnames(vhdsub), colnames(rctd_result_level1))
+vhdsub$discard[colnames(vhdsub) == "91874"]
+# [1] TRUE
+vhdsub$sum_outliers[colnames(vhdsub) == "91874"]
+# [1] TRUE
+vhdsub$sum[colnames(vhdsub) == "91874"]
+head(sort(vhdsub$sum))
 ```
 
 The spot labels are saved in the colData as `spot_class`. This provides a quick quality check: a majority of singlet classifications at cell resolution is expected and supports the validity of the H&E-guided segmentation. 
@@ -413,6 +419,9 @@ We then synchronise the deconvolution labels back into our `vhdsub` SpatialExper
 
 
 ```{r rctd-assign-celltype}
+# Subset to RCTD filtered object for convenience
+vhdsub <- vhdsub[, colnames(vhdsub)]
+
 # Here we use match to ensure that we match the cell IDs
 vhdsub$cellTypeClass <- rctd_result_level1$spot_class[match(colnames(vhdsub), colnames(rctd_result_level1))]
 vhdsub$cellType <- rctd_result_level1$first_type[match(colnames(vhdsub), colnames(rctd_result_level1))]
@@ -450,7 +459,7 @@ dim(vhdsub)
 ```
 
 
-## Domain Identification
+## Spatial domain Identification
 
 First, we identify highly variable genes (HVGs) in the target area: [Note that spatially variable genes (SVGs) could be used instead]{.aside}
 
@@ -484,7 +493,6 @@ tmp <- Banksy::clusterBanksy(tmp, lambda = 0.2, npcs = 20, resolution = 0.8)
 vhdsub$Banksy <- tmp$clust_M0_lam0.2_k50_res0.8
 
 table(vhdsub$Banksy)
-# save(vhdsub, file = here::here("data/vhdsub.RData"))
 ```
 
 Now we can visualize clustering result spatially.
@@ -512,7 +520,7 @@ pbs <- aggregateAcrossCells(vhdsub,
 
 The marker genes in each cluster can be visualized with a heatmap:
 
-```{r plt-mgs-hm, message=FALSE, fig.width=5, fig.height=2.5}
+```{r plt-mgs-hm, message=FALSE, fig.width=4.5, fig.height=2.5}
 # visualize averages z-scaled across clusters
 exec(pheatmap,
     mat = t(assay(pbs)), scale = "column", breaks = seq(-2, 2, length = 101),
@@ -538,14 +546,11 @@ p2 <- plotSpatialFeature(vhdsub, features = "DES",
 ```
 
 
-## Downstream
-
-### Concordance of deconvolution & clustering
+## Concordance of deconvolution & clustering
 
 We can visualize the results spatially:
 
 ```{r plt-dec-clu-xy, fig.width=8, fig.height=3, message=FALSE}
-
 p0 <- plotSpatialFeature(vhdsub, features = "cellType", 
                          colGeometryName = "updatecellSeg") + 
   scale_fill_manual(values = unname(pals::trubetskoy())) + 
@@ -675,7 +680,6 @@ kontextPlot(curves) + theme_bw()
 To aid interpretation, we can also re-plot the spatial map with the immune context greyed and the two focal types coloured. This quickly links our statistical findings to a tangible patterns in the tissue.
 
 ```{r ktx-spatial-highlight, fig.height=4, fig.width=5.5, warning=FALSE, message=FALSE}
-
 df <- colData(vhdsub) |>
   as.data.frame() |>
   cbind(spatialCoords(vhdsub))
@@ -719,35 +723,35 @@ vhdsub <- getAbundances(vhdsub,
 Next, we focus on whether Myeloid cells show distinct expression patterns when they are located close to Tumour cells.
 
 ```{r smark-statechanges-fit}
-# stateChanges <- calcStateChanges(
-#   cells = vhdsub,
-#   type = "abundances",
-#   from = "Myeloid",
-#   to = "Tumor",
-#   test = "nb",
-#   imageID = "sample_id"
-# )
-# 
-# stateChanges |> head(20)
+stateChanges <- calcStateChanges(
+  cells = vhdsub,
+  type = "abundances",
+  from = "Myeloid",
+  to = "Tumor",
+  test = "nb",
+  imageID = "sample_id"
+)
+
+stateChanges |> head(20)
 ```
 The output is a ranked list of genes, highlighting markers that change as Myeloid cells are near tumour cells. SPP1 is known to be expressed in tumour-associated macrophages.
 
-```{r smark-plot-spp1}
-# p <- plotStateChanges(
-#   cells = vhdsub,
-#   image = "sample01",
-#   type = "abundances",
-#   from = "Myeloid",
-#   to = "Tumor",
-#   marker = "SPP1",
-#   imageID = "sample_id",
-#   size = 1,
-#   shape = 19,
-#   interactive = FALSE,
-#   method = "lm"
-# )
-# 
-# p[[1]]
+```{r smark-plot-spp1, warning=FALSE, message=FALSE, fig.height=4, fig.width=7}
+p <- plotStateChanges(
+  cells = vhdsub,
+  image = "sample01",
+  type = "abundances",
+  from = "Myeloid",
+  to = "Tumor",
+  marker = "SPP1",
+  imageID = "sample_id",
+  size = 1,
+  shape = 19,
+  interactive = FALSE,
+  method = "lm"
+)
+
+p[[1]]
 ```
 
 
@@ -771,15 +775,13 @@ Because we already computed RCTD weights, we can mitigate contamination by addin
 
 
 ```{r smark-add-contam-rctd}
-# contam <- assay(rctd_result_level1,1) |>
-#   t() |>
-#   as.matrix() |>
-#   as.data.frame()
-# 
-# reducedDim(vhdsub, "RCTD") <- contam[match(colnames(vhdsub), rownames(contam)),]
+contam <- assay(rctd_result_level1,1) |>
+  t() |>
+  as.matrix() |>
+  as.data.frame()
 
+reducedDim(vhdsub, "RCTD") <- contam[match(colnames(vhdsub), rownames(contam)),]
 ```
-
 
 
 ```{r smark-statechanges-contam}
@@ -793,7 +795,6 @@ Because we already computed RCTD weights, we can mitigate contamination by addin
 #   contamination = "RCTD"
 # )
 # 
-# 
 # stateChangesCon |> filter(marker == "CEACAM6")
 ```
 
@@ -803,7 +804,8 @@ Because we already computed RCTD weights, we can mitigate contamination by addin
 You can try using a finer resolution of cell type classified by RCTD.
 
 ```{r level2_annotation, eval=FALSE}
-# data("rctd_result_level2.RData", package = "EuroBioC2025_OSTA_Workshop")
+# # data("rctd_result_level2.RData", package = "EuroBioC2025_OSTA_Workshop")
+# load(here::here("data/rctd_result_level2.RData"))
 ```
 
 
@@ -825,13 +827,13 @@ Or you can try using a different deconvulation algorithm.
 #     spatial_location = NULL,
 #     ct_varname = "Level2",
 #     ct_select = NULL,       # decon with all sce$Annogrp cell types
-#     sample_varname = NULL,  # use all sce as one ref sample 
+#     sample_varname = NULL,  # use all sce as one ref sample
 #     mincountgene = 0,
 #     mincountspot = 0
 # )
 # 
 # # a matrix/data.frame of probabilities per cell (rows) × cell types (cols)
-# P <- CARD_obj$Proportion_CARD[vhdsub$cell_id, ]
+# P <- CARD_obj$Proportion_CARD[colnames(vhdsub), ]
 # 
 # # cell type with the largest probability in each row
 # vhdsub$cellType2 <- colnames(P)[max.col(P, ties.method = "first")]
