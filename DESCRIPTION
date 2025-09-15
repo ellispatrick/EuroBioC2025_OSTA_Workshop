@@ -10,7 +10,7 @@ Authors@R:
       person(given = "Ellis", 
             family = "Patrick", 
             role = c("aut"), 
-            email = "ellis.patrick@sydney.edu.au")
+            email = "ellis.patrick@sydney.edu.au"))
 Description: This package serves as a template for using github actions to 
     prepare a Bioconductor Workshop package for use. In particular,
     a pkgdown website and docker image are generated based on workflow 
