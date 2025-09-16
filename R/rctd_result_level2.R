@@ -9,5 +9,4 @@
 #' @source Workshop materials.
 #' @examples
 #' data(rctd_result_level2)
-#' str(rctd_result_level2)
 "rctd_result_level2"
