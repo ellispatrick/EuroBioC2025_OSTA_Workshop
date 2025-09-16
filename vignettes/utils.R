@@ -1,5 +1,5 @@
 library(SpatialExperiment)
-library(ggspavis)
+#library(ggspavis)
 library(sf)
 library(DropletUtils)
 library(SingleCellExperiment)
