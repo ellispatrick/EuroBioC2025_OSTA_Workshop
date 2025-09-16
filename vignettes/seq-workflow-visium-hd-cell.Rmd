@@ -580,12 +580,12 @@ exec(pheatmap, fq, !!!common_args_heatmap)
 
 ### Localisation
 
-We next quantify spatial proximity between annotated cell types. The `getPairwise()` function from the `spicyR` package computes the K-cross function across all pairs of classes, summarising whether cell type A tends to appear within distance r of cell type B more often than expected under spatial randomness. Here we use a radius of 25 units to capture immediate neighbourhood effects at approximately one to two cell diameters.
+We next quantify spatial proximity between annotated cell types. The `getPairwise()` function from the `spicyR` package computes the K-cross function across all pairs of classes, summarising whether cell type A tends to appear within distance r of cell type B more often than expected under spatial randomness. Here we use a radius of 200 units (~50 microns) to capture immediate neighbourhood effects at approximately one to two cell diameters.
 
 
 ```{r spicy-pairwise-kcross}
 crossK = getPairwise(vhdsub, 
-                     r = 25, 
+                     r = 200, 
                      cellType = "cellType",
                      imageID = "sample_id",
                      spatialCoords = c("pxl_col_in_fullres", 
@@ -597,7 +597,7 @@ We can visualise these relationships using `imageCrossPlot()`. It visualises enr
 
 
 ```{r spicy-pairwise-plot, fig.height=4, fig.width=6}
-imageCrossPlot(crossK)
+imageCrossPlot(crossK, limits = c(-400,400))
 ```
 
 We can visualise the spatial arrangement of our annotated cells to build intuition for these statistics. This helps confirm that any strong pairwise signals are visible in the image and not driven by a handful of cells.
@@ -640,7 +640,7 @@ resultsKontextual <- Kontextual(
   imageID = "sample_id",
   cellType = "cellType",
   spatialCoords = c("pxl_col_in_fullres", "pxl_row_in_fullres"),
-  r = 20
+  r = 200
 )
 ```
 
@@ -668,7 +668,7 @@ curves <- kontextCurve(
   from = "Tumor",
   to = "Myeloid",
   parent = immune,
-  rs = seq(5, 105, 20),
+  rs = seq(20, 500, 50),
   image = "sample01",
   cellType = "cellType",
   imageID = "sample_id"
@@ -713,7 +713,7 @@ First, we need to quantify the abundance of each cell type around each cell.
 
 ```{r smark-abundances}
 vhdsub <- getAbundances(vhdsub,
-  r = 25,
+  r = 200,
   cellType = "cellType",
   imageID = "sample_id"
 )
@@ -785,17 +785,17 @@ reducedDim(vhdsub, "RCTD") <- contam[match(colnames(vhdsub), rownames(contam)),]
 
 
 ```{r smark-statechanges-contam}
-# stateChangesCon <- calcStateChanges(
-#   cells = vhdsub,
-#   type = "abundances",
-#   from = "Myeloid",
-#   to = "Tumor",
-#   test = "nb",
-#   imageID = "sample_id",
-#   contamination = "RCTD"
-# )
-# 
-# stateChangesCon |> filter(marker == "CEACAM6")
+stateChangesCon <- calcStateChanges(
+  cells = vhdsub,
+  type = "abundances",
+  from = "Myeloid",
+  to = "Tumor",
+  test = "nb",
+  imageID = "sample_id",
+  contamination = "RCTD"
+)
+
+stateChangesCon |> filter(marker == "CEACAM6")
 ```
 
 
@@ -804,41 +804,40 @@ reducedDim(vhdsub, "RCTD") <- contam[match(colnames(vhdsub), rownames(contam)),]
 You can try using a finer resolution of cell type classified by RCTD.
 
 ```{r level2_annotation, eval=FALSE}
-# # data("rctd_result_level2.RData", package = "EuroBioC2025_OSTA_Workshop")
-# load(here::here("data/rctd_result_level2.RData"))
+load(here::here("data/rctd_result_level2.RData"))
 ```
 
 
 Or you can try using a different deconvulation algorithm.
 
 ```{r CARD, eval=FALSE}
-# set.seed(2025)
-# vhd2 <- vhdsub
-# colnames(spatialCoords(vhd2)) <- c("x", "y")
-# sce2 <-sce[, down_sample]
-# counts(vhd2) <- as(counts(vhd2), "sparseMatrix")
-# counts(sce2) <- as(counts(sce2), "sparseMatrix")
-# CARD_obj <- CARD_deconvolution(
-#     spe = vhd2,
-#     sce = sce2,
-#     sc_count = NULL,
-#     sc_meta = NULL,
-#     spatial_count = NULL,
-#     spatial_location = NULL,
-#     ct_varname = "Level2",
-#     ct_select = NULL,       # decon with all sce$Annogrp cell types
-#     sample_varname = NULL,  # use all sce as one ref sample
-#     mincountgene = 0,
-#     mincountspot = 0
-# )
-# 
-# # a matrix/data.frame of probabilities per cell (rows) × cell types (cols)
-# P <- CARD_obj$Proportion_CARD[colnames(vhdsub), ]
-# 
-# # cell type with the largest probability in each row
-# vhdsub$cellType2 <- colnames(P)[max.col(P, ties.method = "first")]
-# 
-# reducedDim(vhdsub, "CARD") <- as.data.frame(P)
+set.seed(2025)
+vhd2 <- vhdsub
+colnames(spatialCoords(vhd2)) <- c("x", "y")
+sce2 <-sce[, down_sample]
+counts(vhd2) <- as(counts(vhd2), "sparseMatrix")
+counts(sce2) <- as(counts(sce2), "sparseMatrix")
+CARD_obj <- CARD_deconvolution(
+    spe = vhd2,
+    sce = sce2,
+    sc_count = NULL,
+    sc_meta = NULL,
+    spatial_count = NULL,
+    spatial_location = NULL,
+    ct_varname = "Level2",
+    ct_select = NULL,       # decon with all sce$Annogrp cell types
+    sample_varname = NULL,  # use all sce as one ref sample
+    mincountgene = 0,
+    mincountspot = 0
+)
+
+# a matrix/data.frame of probabilities per cell (rows) × cell types (cols)
+P <- CARD_obj$Proportion_CARD[colnames(vhdsub), ]
+
+# cell type with the largest probability in each row
+vhdsub$cellType2 <- colnames(P)[max.col(P, ties.method = "first")]
+
+reducedDim(vhdsub, "CARD") <- as.data.frame(P)
 ```
 
 
