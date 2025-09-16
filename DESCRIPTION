@@ -19,7 +19,7 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.1.0
+RoxygenNote: 7.3.3
 Depends: 
     Biobase,
     BiocStyle,
@@ -64,3 +64,5 @@ BugReports: https://github.com/estellad/EuroBioC2025_OSTA_Workshop/issues/new/ch
 VignetteBuilder: knitr
 DockerImage: ghcr.io/estellad/eurobioc2025ostaworkshop:latest
 Remotes: SydneyBioX/Statial
+LazyData: true
+LazyDataCompression: xz
