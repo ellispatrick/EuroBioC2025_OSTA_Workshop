@@ -18,7 +18,9 @@ knitr::opts_chunk$set(
 
 # Workflow: Visium HD cell-level
 
-Authors: Yixing E. Dong[^1], Ellis Patrick[^2]. <br/> Last modified: 15 September, 2025.
+Authors: Yixing E. Dong[^1], Ellis Patrick[^2].  
+
+Last modified: 15 September, 2025.
 
 [^1]: University of Lausanne, Lausanne, Switzerland
 
