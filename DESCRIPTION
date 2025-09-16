@@ -33,6 +33,7 @@ Depends:
     igraph,
     magick,
     OSTA.data,
+    pals,
     patchwork,
     pheatmap,
     plotly,
@@ -61,4 +62,4 @@ URL: https://estellad.github.io/EuroBioC2025_OSTA_Workshop/
 BugReports: https://github.com/estellad/EuroBioC2025_OSTA_Workshop/issues/new/choose
 VignetteBuilder: knitr
 DockerImage: ghcr.io/estellad/eurobioc2025ostaworkshop:latest
-Remotes: SydneyBioX/Statial, ellispatrick/spicyR
+Remotes: SydneyBioX/Statial
