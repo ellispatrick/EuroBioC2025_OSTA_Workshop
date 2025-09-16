@@ -26,6 +26,7 @@ Depends:
     CARDspa,
     dplyr,
     DropletUtils,
+    GenomeInfoDb, 
     ggplot2,
     grDevices,
     grid,

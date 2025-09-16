@@ -18,6 +18,5 @@ Results from running RCTD at level-1 granularity for the workshop.
 }
 \examples{
 data(rctd_result_level1)
-str(rctd_result_level1)
 }
 \keyword{datasets}
