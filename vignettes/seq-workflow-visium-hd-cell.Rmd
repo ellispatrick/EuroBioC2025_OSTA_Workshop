@@ -47,9 +47,6 @@ Additional reading:
 
 Participants can watch the live demo, or may prefer to follow the demonstration by bringing their laptops along. To follow the analysis on their own laptops, participants need to install the `EuroBioC2025_OSTA_Workshop` workflow by running
 
-<!-- # ```{r} -->
-<!-- # # TODO -->
-<!-- # ``` -->
 
 The relevant data are stored on Open Science Framework, and can be downloaded as delayed format cached on your laptop through `OSTA.data`:
 
@@ -77,8 +74,9 @@ CRAN: dplyr, igraph, ggplot2, magick, patchwork, pheatmap, sf, tidyr, tidyverse
 | Initialization               |  3 mins |
 | Data loading                 |  7 mins |
 | Data processing              |  5 mins |
+| Cell annotation              | 10 mins |
 | Domain identification        | 10 mins |
-| Deconvolution                | 15 mins |
+| Spatial analysis             | 30 mins |
 | Conclusion                   |  5 mins |
 
 ## Workshop goals and objectives
@@ -147,7 +145,7 @@ library(Voyager)
 Output files from SpaceRanger v4 are listed in `/segmented_outputs` folder, with the expected structure detailed in @sec-bkg-importing. We start with read in cell segmentation as a `sf` object, scaling factor `.json` file, and image file. We will use high resolution image, as it gives expected H&E details under segmented cell masks.
 
 ```{r prep}
-source("utils.R")
+source(here::here("vignettes/utils.R"))
 
 # ggplot theme alias
 center_title <- theme(plot.title = element_text(hjust = 0.5))
@@ -527,7 +525,7 @@ exec(pheatmap,
     !!!common_args_heatmap)
 ```
 
-We can visualize some maker genes:
+We can visualize some marker genes:
 
 ```{r plt-mgs-xy, fig.width=8, fig.height=2.5, message=FALSE}
 p0 <- plotSpatialFeature(vhdsub, features = "MMP2", 
@@ -699,15 +697,15 @@ ggplot(data = filter(df, cellType %in% c("Tumor", "Myeloid")),
 
 Spatial proximity tells us where different cell types are relative to one another, but an equally important question is what happens to those cells when they are in close contact. Proximity alone does not guarantee functional interaction. To uncover biological relevance, we need to test whether changes in the microenvironment are associated with measurable shifts in gene expression within a given cell type.
 
-This is the motivation behind `spatioMark`, part of the Statial package. The idea is simple but powerful:
+This is the motivation behind `spatioMark`, part of the Statial package. The idea is simple:
 
 - take a target population (for example, Myeloid cells),
 
 - quantify its local environment (how many Tumour cells, T cells, fibroblasts, etc. are nearby within a certain radius),
 
-- and ask whether the transcriptomes of the target cells vary systematically with that environment.
+- and ask whether the transcriptomes of the target cells vary with that environment.
 
-In practice, spatioMark first computes local abundances of each cell type around every cell, giving each cell a numerical “neighbourhood profile.” These covariates then feed into a gene-wise regression model. For each gene expressed in the target population, spatioMark fits a generalised linear model with a negative binomial mean–variance relationship to account for count data. The coefficients tell us whether gene expression increases or decreases as the abundance of a chosen neighbour rises.
+In practice, spatioMark first computes local abundances of each cell type around every cell, giving each cell a numerical “neighbourhood profile.” These covariates then feed into a gene-wise regression model. For each gene expressed in the target population, spatioMark fits a generalised linear model. As we have count data in this case, we leverage functionality in the `edgeR` package to model the data as negative binomial. The coefficients tell us whether gene expression increases or decreases as the abundance of a chosen neighbour rises.
 
 First, we need to quantify the abundance of each cell type around each cell.
 
@@ -720,7 +718,7 @@ vhdsub <- getAbundances(vhdsub,
 ```
 
 
-Next, we focus on whether Myeloid cells show distinct expression patterns when they are located close to Tumour cells.
+Next, we focus on whether Myeloid cells show distinct expression patterns when they are located close to Tumour cells. 
 
 ```{r smark-statechanges-fit}
 stateChanges <- calcStateChanges(
@@ -734,7 +732,9 @@ stateChanges <- calcStateChanges(
 
 stateChanges |> head(20)
 ```
-The output is a ranked list of genes, highlighting markers that change as Myeloid cells are near tumour cells. SPP1 is known to be expressed in tumour-associated macrophages.
+
+
+The previous output is a ranked list of genes, highlighting markers that change as Myeloid cells are near tumour cells. One of the top genes on this list is SPP1 which is known to be expressed in tumour-associated macrophages. We can visualise this relationship using the `plotStateChanges()` function.
 
 ```{r smark-plot-spp1, warning=FALSE, message=FALSE, fig.height=4, fig.width=7}
 p <- plotStateChanges(
@@ -771,7 +771,7 @@ sce[, down_sample] |>
 
 
 
-Because we already computed RCTD weights, we can mitigate contamination by adding deconvolution-derived components as covariates to our models. By projecting the RCTD cell-type weight matrix into `reducedDim(vhdsub, "RCTD")`, we can pass "RCTD" to the contamination argument of `calcStateChanges()`. This can remove false positives like CEACAM6 while preserving genuine relationships.
+Because we already computed RCTD weights, we can mitigate contamination by adding deconvolution-derived components as covariates to our models. By storing the RCTD cell-type weight matrix into `reducedDim(vhdsub, "RCTD")`, we can pass "RCTD" to the contamination argument of `calcStateChanges()`. SpatioMark will use these estimates of contamination in its modelling to hopefully remove false positives like CEACAM6 while preserving genuine relationships.
 
 
 ```{r smark-add-contam-rctd}
