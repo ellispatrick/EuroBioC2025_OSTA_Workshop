@@ -64,3 +64,5 @@ BugReports: https://github.com/estellad/EuroBioC2025_OSTA_Workshop/issues/new/ch
 VignetteBuilder: knitr
 DockerImage: ghcr.io/estellad/eurobioc2025ostaworkshop:latest
 Remotes: SydneyBioX/Statial
+LazyData: true
+LazyDataCompression: xz
