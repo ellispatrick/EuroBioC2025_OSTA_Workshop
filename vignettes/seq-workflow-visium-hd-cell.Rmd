@@ -161,10 +161,10 @@ gradient_theme <- theme(plot.title = element_text(hjust = 0.5),
 
 thin_discrete_legend <- theme(legend.key.size = grid::unit(0.5, "lines"))
 
+enlarge_legend_dot <- guides(col=guide_legend(override.aes=list(size=3)))
+
 common_args_heatmap <- list(cellwidth=10, cellheight=10, 
                             treeheight_row=5, treeheight_col=5)
-
-enlarge_legend_dot <- guides(col=guide_legend(override.aes=list(size=3)))
 ```
 
 ```{r osta_download}
